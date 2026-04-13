@@ -104,67 +104,97 @@ text.textAutoResize = 'HEIGHT';
 
 ---
 
-## 5. Annotation callouts
+## 5. Native Figma Dev Mode Annotations
 
-### Interaction annotation (yellow)
+These are REAL Figma annotations — they show up in Dev Mode, can be filtered by category,
+support markdown, and stay attached to their target nodes. Do NOT create colored rectangles
+on the canvas as fake annotations.
+
+### Setting up annotation categories (do this once at the start)
 ```javascript
-async function createAnnotation(text, detail, parent, x, y) {
-  const anno = figma.createFrame();
-  anno.name = `Annotation: ${text}`;
-  anno.layoutMode = 'VERTICAL';
-  anno.primaryAxisSizingMode = 'AUTO';
-  anno.counterAxisSizingMode = 'AUTO';
-  anno.paddingTop = 10;
-  anno.paddingBottom = 10;
-  anno.paddingLeft = 14;
-  anno.paddingRight = 14;
-  anno.itemSpacing = 4;
-  anno.cornerRadius = 6;
-  anno.fills = [{ type: 'SOLID', color: { r: 1, g: 0.96, b: 0.82 } }];
-  anno.strokes = [{ type: 'SOLID', color: { r: 0.9, g: 0.78, b: 0.4 } }];
-  anno.strokeWeight = 1;
+// Create categories so reviewers can filter by what they care about
+const interactionCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Interaction', color: 'blue'
+});
+const navigationCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Navigation', color: 'violet'
+});
+const stateCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'State Change', color: 'teal'
+});
+const validationCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Validation', color: 'orange'
+});
+const errorCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Error Handling', color: 'red'
+});
+const edgeCaseCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Edge Case', color: 'pink'
+});
+const dataCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Data / API', color: 'green'
+});
+const a11yCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Accessibility', color: 'yellow'
+});
+```
 
-  await figma.loadFontAsync({ family: "Inter", style: "Semi Bold" });
-  const label = figma.createText();
-  label.fontName = { family: "Inter", style: "Semi Bold" };
-  label.characters = text;
-  label.fontSize = 11;
-  label.fills = [{ type: 'SOLID', color: { r: 0.55, g: 0.38, b: 0 } }];
-  anno.appendChild(label);
+Available colors: `'yellow'`, `'orange'`, `'red'`, `'pink'`, `'violet'`, `'blue'`,
+`'teal'`, `'green'`.
 
-  if (detail) {
-    await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-    const desc = figma.createText();
-    desc.fontName = { family: "Inter", style: "Regular" };
-    desc.characters = detail;
-    desc.fontSize = 10;
-    desc.fills = [{ type: 'SOLID', color: { r: 0.45, g: 0.35, b: 0.05 } }];
-    desc.resize(260, 1);
-    desc.textAutoResize = 'HEIGHT';
-    anno.appendChild(desc);
+### Adding annotations to nodes
+```javascript
+// Simple text annotation
+node.annotations = [{ label: 'Opens settings modal on click' }];
+
+// Rich markdown annotation with category
+node.annotations = [
+  {
+    labelMarkdown: '**On click →** Submits form via `POST /api/items`\n\n' +
+      '- Success: closes modal, refreshes list\n' +
+      '- Error: shows inline error banner\n\n' +
+      '*Debounced: 300ms*',
+    categoryId: interactionCat.id
   }
+];
 
-  anno.x = x;
-  anno.y = y;
-  parent.appendChild(anno);
-  return anno;
-}
+// Multiple annotations on the same node (different concerns)
+node.annotations = [
+  {
+    labelMarkdown: '**Validation:** Required, min 3 chars, max 100 chars',
+    categoryId: validationCat.id
+  },
+  {
+    labelMarkdown: '**Keyboard:** Tab to next field, Enter submits form',
+    categoryId: a11yCat.id
+  }
+];
+
+// Pinning design properties alongside notes
+node.annotations = [
+  {
+    label: 'Responsive: 600px max on desktop, full-width on mobile',
+    properties: [{ type: 'width' }, { type: 'maxWidth' }]
+  }
+];
+
+// Clearing annotations
+node.annotations = [];
 ```
 
-### Error path annotation (red)
-Same pattern but with:
+### Retrieving existing categories (if file already has them)
 ```javascript
-fills: [{ type: 'SOLID', color: { r: 1, g: 0.92, b: 0.92 } }]
-strokes: [{ type: 'SOLID', color: { r: 0.9, g: 0.5, b: 0.5 } }]
-// Text fills: { r: 0.7, g: 0.15, b: 0.15 }
+const existingCategories = await figma.annotations.getAnnotationCategoriesAsync();
+// Find a specific one
+const interactionCat = existingCategories.find(c => c.label === 'Interaction');
 ```
 
-### Success path annotation (green)
-```javascript
-fills: [{ type: 'SOLID', color: { r: 0.92, g: 1, b: 0.92 } }]
-strokes: [{ type: 'SOLID', color: { r: 0.5, g: 0.8, b: 0.5 } }]
-// Text fills: { r: 0.1, g: 0.5, b: 0.15 }
-```
+### Supported pinnable property types
+`'width'`, `'height'`, `'maxWidth'`, `'minWidth'`, `'maxHeight'`, `'minHeight'`,
+`'fills'`, `'strokes'`, `'effects'`, `'strokeWeight'`, `'cornerRadius'`,
+`'textStyleId'`, `'textAlignHorizontal'`, `'fontFamily'`, `'fontStyle'`, `'fontSize'`,
+`'fontWeight'`, `'lineHeight'`, `'letterSpacing'`, `'itemSpacing'`, `'padding'`,
+`'layoutMode'`, `'alignItems'`, `'opacity'`, `'mainComponent'`
 
 ---
 
@@ -287,16 +317,20 @@ function layoutFlowFrames(frames, startX, startY) {
 
 ---
 
-## 10. Color palette for annotations
+## 10. Annotation category reference
 
-Consistent colors make the output scannable:
+Native Figma annotation categories and their intended use:
 
-| Element | Background RGB | Stroke RGB | Text RGB |
-|---|---|---|---|
-| Interaction trigger | 1, 0.96, 0.82 | 0.9, 0.78, 0.4 | 0.55, 0.38, 0 |
-| Success path | 0.92, 1, 0.92 | 0.5, 0.8, 0.5 | 0.1, 0.5, 0.15 |
-| Error path | 1, 0.92, 0.92 | 0.9, 0.5, 0.5 | 0.7, 0.15, 0.15 |
-| Info / neutral | 0.93, 0.95, 1 | 0.6, 0.7, 0.95 | 0.2, 0.3, 0.65 |
-| Flow arrow | — | 0.25, 0.45, 0.95 | — |
-| "No DS" badge | 0.9, 0.5, 0.1 | — | 1, 1, 1 |
-| State badge | 0.25, 0.45, 0.95 | — | 1, 1, 1 |
+| Category | Color | Use for |
+|---|---|---|
+| Interaction | `'blue'` | Click/tap/gesture triggers and their results |
+| Navigation | `'violet'` | Page/view transitions, routing, deep links |
+| State Change | `'teal'` | State descriptions, transition conditions, lifecycle |
+| Validation | `'orange'` | Form validation rules, constraints, input formatting |
+| Error Handling | `'red'` | Error states, recovery paths, fallback behavior |
+| Edge Case | `'pink'` | Non-obvious behaviors, race conditions, timing quirks |
+| Data / API | `'green'` | Data sources, endpoints, caching, loading behavior |
+| Accessibility | `'yellow'` | Keyboard nav, screen reader text, ARIA, focus order |
+
+Reviewers can filter by any of these categories in Dev Mode to focus on what's
+relevant to their role.

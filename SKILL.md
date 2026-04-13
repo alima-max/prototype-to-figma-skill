@@ -270,67 +270,208 @@ patterns (font loading, auto-layout, text nodes, positioning). This avoids commo
         `search_design_system` where possible for consistent colors and spacing
      e. Name layers clearly — reviewers may inspect the layer tree
 
-4. **Add interaction annotations** — This is what makes the output useful for async review.
-   For each state transition, add annotations that explain:
-   - **Trigger**: What the user does (e.g., "Clicks 'Save' button")
-   - **Result**: What happens (e.g., "Shows loading spinner for 1-2s, then transitions to
-     success state")
-   - **Conditions**: Any branching logic (e.g., "If validation fails, show error state 1.3b
-     instead")
-   - **Edge cases**: Anything non-obvious (e.g., "Debounced — won't fire if clicked within
-     300ms of last click")
+5. **Add interaction annotations using Figma's native annotation API** — This is the most
+   important step. It's what makes the output useful for async review. Without this, reviewers
+   just see static screens with no indication of what's interactive or how states connect.
 
-**How to create annotations in Figma:**
+   Figma has a first-class annotation system that surfaces directly in Dev Mode. These are NOT
+   colored rectangles or text frames sitting on the canvas — they are native Figma annotations
+   that attach to specific layers, appear in the Dev Mode sidebar, support markdown, can be
+   filtered by category, and stay linked to their target node even if the design moves.
 
-Use native Figma annotation-style patterns. Create clearly labeled annotation nodes next to or
-overlaying the relevant elements:
+   **Every interactive element in every frame MUST get an annotation.** If a button triggers
+   navigation, annotate the button. If a form field has validation, annotate the field. If a
+   list item is clickable, annotate the list item. If a state has a loading timeout, annotate
+   the loading indicator. The goal is that a reviewer can click on any element in Dev Mode and
+   immediately understand its behavior without running the prototype.
 
-```javascript
-// Annotation pattern — a colored callout connected to the relevant element
-const annotation = figma.createFrame();
-annotation.name = "Annotation: [trigger description]";
-annotation.resize(320, 100);
-annotation.fills = [{ type: 'SOLID', color: { r: 1, g: 0.95, b: 0.8 } }]; // light yellow
-annotation.cornerRadius = 8;
-annotation.layoutMode = 'VERTICAL';
-annotation.paddingTop = 12;
-annotation.paddingBottom = 12;
-annotation.paddingLeft = 16;
-annotation.paddingRight = 16;
-annotation.itemSpacing = 4;
+   **Step 5a: Set up annotation categories**
 
-// Annotation label
-const label = figma.createText();
-await figma.loadFontAsync({ family: "Inter", style: "Semi Bold" });
-label.fontName = { family: "Inter", style: "Semi Bold" };
-label.characters = "On click → Save";
-label.fontSize = 12;
-label.fills = [{ type: 'SOLID', color: { r: 0.6, g: 0.4, b: 0 } }];
-annotation.appendChild(label);
+   Before adding any annotations, create categorized annotation types so reviewers can filter
+   by what they care about. Use `figma.annotations.addAnnotationCategoryAsync()`:
 
-// Annotation body
-const body = figma.createText();
-await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-body.fontName = { family: "Inter", style: "Regular" };
-body.characters = "Validates form fields. If valid, shows loading state (Frame 1.3)...";
-body.fontSize = 11;
-body.fills = [{ type: 'SOLID', color: { r: 0.4, g: 0.3, b: 0 } }];
-body.textAutoResize = 'WIDTH_AND_HEIGHT';
-annotation.appendChild(body);
-```
+   ```javascript
+   // Create categories for different types of interaction details
+   const interactionCat = await figma.annotations.addAnnotationCategoryAsync({
+     label: 'Interaction',
+     color: 'blue'
+   });
+   const navigationCat = await figma.annotations.addAnnotationCategoryAsync({
+     label: 'Navigation',
+     color: 'violet'
+   });
+   const stateCat = await figma.annotations.addAnnotationCategoryAsync({
+     label: 'State Change',
+     color: 'teal'
+   });
+   const validationCat = await figma.annotations.addAnnotationCategoryAsync({
+     label: 'Validation',
+     color: 'orange'
+   });
+   const errorCat = await figma.annotations.addAnnotationCategoryAsync({
+     label: 'Error Handling',
+     color: 'red'
+   });
+   const edgeCaseCat = await figma.annotations.addAnnotationCategoryAsync({
+     label: 'Edge Case',
+     color: 'pink'
+   });
+   const dataCat = await figma.annotations.addAnnotationCategoryAsync({
+     label: 'Data / API',
+     color: 'green'
+   });
+   const a11yCat = await figma.annotations.addAnnotationCategoryAsync({
+     label: 'Accessibility',
+     color: 'yellow'
+   });
+   ```
 
-For flow connectors between frames, use lines or arrows:
+   Available category colors: `'yellow'`, `'orange'`, `'red'`, `'pink'`, `'violet'`, `'blue'`,
+   `'teal'`, `'green'`.
+
+   **Step 5b: Annotate every interactive element**
+
+   For each interactive element in each frame, set the `annotations` property on the node
+   itself. Use markdown in `labelMarkdown` for rich formatting:
+
+   ```javascript
+   // Example: Annotating a "Save" button with its click behavior
+   const saveButton = figma.currentPage.findOne(
+     n => n.name === "Button: Save" && n.parent.name.includes("1.2")
+   );
+   saveButton.annotations = [
+     {
+       labelMarkdown: '**On click →** Validates all form fields.\n\n' +
+         '- If valid: shows loading spinner (→ Frame 1.3), then saves via ' +
+         '`POST /api/items` and transitions to success state (→ Frame 1.4a)\n' +
+         '- If invalid: highlights error fields with red border, shows inline ' +
+         'error messages (→ Frame 1.4b)\n\n' +
+         '*Debounced: 300ms cooldown after last click*',
+       categoryId: interactionCat.id
+     }
+   ];
+
+   // Example: Annotating a form field with validation rules
+   const emailField = figma.currentPage.findOne(
+     n => n.name === "Input: Email"
+   );
+   emailField.annotations = [
+     {
+       labelMarkdown: '**Validation rules:**\n' +
+         '- Required field\n' +
+         '- Must match email regex\n' +
+         '- Checks uniqueness via `GET /api/users/check-email`\n' +
+         '- Shows inline error on blur if invalid',
+       categoryId: validationCat.id
+     },
+     {
+       labelMarkdown: '**Keyboard:** Tab moves to next field. Enter submits form.',
+       categoryId: a11yCat.id
+     }
+   ];
+
+   // Example: Annotating a frame-level state description
+   const loadingFrame = figma.currentPage.findOne(
+     n => n.name === "1.3 — Saving (loading state)"
+   );
+   loadingFrame.annotations = [
+     {
+       labelMarkdown: '**State: Loading**\n\n' +
+         'Triggered after successful validation. Spinner replaces button text.\n' +
+         'All form fields disabled during save.\n\n' +
+         '**Timeout:** If no response after 10s, shows error toast and ' +
+         're-enables form (→ Frame 1.4b)',
+       categoryId: stateCat.id
+     }
+   ];
+
+   // Example: Annotating an error state
+   const errorToast = figma.currentPage.findOne(
+     n => n.name === "Toast: Error"
+   );
+   errorToast.annotations = [
+     {
+       labelMarkdown: '**Error toast**\n\n' +
+         'Shows on: network failure, server 500, or timeout.\n' +
+         'Auto-dismisses after 5s. User can also click ✕ to dismiss.\n' +
+         'Includes "Retry" action button that re-submits the last request.',
+       categoryId: errorCat.id
+     }
+   ];
+
+   // Example: Annotating data-dependent behavior
+   const dataTable = figma.currentPage.findOne(
+     n => n.name === "DataTable: Items"
+   );
+   dataTable.annotations = [
+     {
+       labelMarkdown: '**Data source:** `GET /api/items?page=1&limit=25`\n\n' +
+         'Pagination: loads 25 rows at a time, infinite scroll.\n' +
+         'Empty state: shows illustration + "No items yet" message.\n' +
+         'Sorting: click column header to toggle asc/desc.',
+       categoryId: dataCat.id
+     }
+   ];
+   ```
+
+   You can also pin specific design properties alongside notes to highlight key visual specs:
+
+   ```javascript
+   // Pin the width property alongside a note about responsive behavior
+   someNode.annotations = [
+     {
+       label: 'Max-width: 600px on desktop, full-width on mobile',
+       properties: [{ type: 'width' }, { type: 'maxWidth' }]
+     }
+   ];
+   ```
+
+   Supported property types you can pin: `'width'`, `'height'`, `'maxWidth'`, `'minWidth'`,
+   `'maxHeight'`, `'minHeight'`, `'fills'`, `'strokes'`, `'effects'`, `'strokeWeight'`,
+   `'cornerRadius'`, `'fontSize'`, `'fontFamily'`, `'lineHeight'`, `'letterSpacing'`,
+   `'itemSpacing'`, `'padding'`, `'layoutMode'`, `'alignItems'`, `'opacity'`.
+
+   **Step 5c: What to annotate — the checklist**
+
+   For every frame in the output, walk through this checklist and annotate accordingly:
+
+   - [ ] **Clickable elements**: What happens on click? Where does the user go?
+   - [ ] **Form fields**: Validation rules, required/optional, input masks, character limits
+   - [ ] **State triggers**: What caused this state? How does the user leave it?
+   - [ ] **Loading behaviors**: Duration, timeout handling, what's disabled during load
+   - [ ] **Error states**: What errors are possible? How are they displayed? Recovery paths?
+   - [ ] **Empty states**: When does this appear? What action helps the user move forward?
+   - [ ] **Conditional visibility**: What determines if this element shows/hides?
+   - [ ] **Data dependencies**: What API calls? What happens if data is missing/slow/stale?
+   - [ ] **Keyboard/a11y**: Tab order, keyboard shortcuts, screen reader considerations
+   - [ ] **Animations/transitions**: Duration, easing, what triggers them
+   - [ ] **Hover/focus states**: Described via annotation even if not shown as separate frames
+
+   **The annotation density should be HIGH.** A frame with 5 interactive elements should have
+   at minimum 5 annotations. A complex form might have 10-15. This is the entire point of the
+   skill — making implicit interaction logic explicit for async reviewers.
+
+For flow connectors between frames, use lines or arrows on the canvas (these are visual aids,
+separate from the native annotations above):
 
 ```javascript
 // Arrow connecting two frames to show flow direction
 const arrow = figma.createLine();
 arrow.name = "Flow: 1.1 → 1.2";
 arrow.resize(200, 0);
-// Position between frames
 arrow.x = frame1.x + frame1.width + 10;
 arrow.y = frame1.y + frame1.height / 2;
 arrow.strokes = [{ type: 'SOLID', color: { r: 0.2, g: 0.4, b: 1 } }];
 arrow.strokeWeight = 2;
+arrow.strokeCap = 'ARROW_EQUILATERAL';
+
+// Annotate the arrow itself to explain the transition condition
+arrow.annotations = [
+  {
+    labelMarkdown: '**Transition:** On successful save (HTTP 200)',
+    categoryId: navigationCat.id
+  }
+];
 ```
 
 ### Phase 5: Add a flow overview
@@ -340,11 +481,18 @@ table of contents:
 
 - **Feature name and description** — what the prototype demonstrates
 - **Flow list** — numbered list of flows with brief descriptions
-- **Legend** — explain the annotation color coding if you used multiple colors:
-  - Yellow callouts = interaction triggers
-  - Blue arrows = flow direction / transitions
-  - Red callouts = error/edge-case paths
-  - Green callouts = success paths
+- **Legend** — explain the annotation categories and what reviewers should look for:
+  - Blue (Interaction) = click/tap/gesture triggers and their results
+  - Violet (Navigation) = page/view transitions and routing
+  - Teal (State Change) = state descriptions and transition conditions
+  - Orange (Validation) = form validation rules and constraints
+  - Red (Error Handling) = error states, recovery paths, fallbacks
+  - Pink (Edge Case) = non-obvious behaviors, race conditions, timing
+  - Green (Data / API) = data sources, endpoints, loading/caching behavior
+  - Yellow (Accessibility) = keyboard behavior, screen reader, a11y considerations
+  - Note: Reviewers can **filter annotations by category** in Dev Mode to focus on
+    what's relevant to their role (e.g., engineers filter to Data/API and Interaction,
+    PMs filter to Edge Case and Error Handling)
 - **Open questions** — if the prototype has ambiguous behaviors or things that need design
   input, call them out here explicitly. This is gold for async review.
 
@@ -388,9 +536,13 @@ Share the Figma file URL with the user and summarize what was created:
 from PMs, engineers, and other stakeholders — not a production-ready design file. Clear labels,
 obvious flow direction, and thorough annotations matter more than pixel-perfect spacing.
 
-**Annotate generously.** The prototype contains implicit knowledge — state transitions, edge
-cases, timing, conditional logic — that isn't visible in a static frame. Every annotation you
-add saves a Slack thread. When in doubt, annotate.
+**Annotate generously — this is the core deliverable.** The prototype contains implicit
+knowledge — state transitions, edge cases, timing, conditional logic — that isn't visible in a
+static frame. Every native Figma annotation you add saves a Slack thread. A frame without
+annotations is just a screenshot and defeats the purpose of this skill. When in doubt, annotate.
+Use `node.annotations = [...]` on the actual interactive elements, not colored rectangles on the
+canvas. Native annotations appear in Dev Mode, can be filtered by category, support markdown,
+and stay attached to their target node.
 
 **Respect the design system.** Using the team's actual Figma components (vs. drawing rectangles
 that look like buttons) means reviewers see familiar patterns and can focus on the new
