@@ -33,6 +33,33 @@ The user has built (or is working on) a prototype in Claude Code and wants to:
 
 ---
 
+## Two non-negotiable rules
+
+These rules exist to prevent the two bugs most commonly reported by users of this skill:
+
+### Rule 1: Never create new Figma components
+
+**Do not** call `figma.createComponent()` or `figma.createComponentSet()` under any
+circumstances. These calls create new master components inside the target Figma file, polluting
+the design system with components that don't belong there.
+
+When a prototype element has no match in the design system:
+- Build it from **primitives** (`figma.createFrame()`, `figma.createRectangle()`,
+  `figma.createText()`) using the prototype's visual structure as reference
+- Add a **"No DS match"** badge overlay so reviewers and designers know this element needs
+  a DS component created for it
+- List it in your final summary so the design team knows what's missing from the DS
+
+### Rule 2: Never omit a prototype element
+
+**Every visible element** in the prototype must appear in the Figma output — either as a DS
+component instance (if a match was found) or as a primitive approximation (if not).
+
+Do not skip an element because you couldn't find its DS match. Skipping elements is what causes
+reviewers to see a Figma file that's missing whole sections of the prototype UI.
+
+---
+
 ## Client Compatibility
 
 Different Figma MCP clients support different tool subsets. This skill detects what's available
@@ -68,34 +95,6 @@ and automatically uses the best possible workflow for your client.
 | Replit | ❌ | ✅ | ❌ |
 | Warp | varies | varies | ❌ |
 
-### What "Inspect" tools means for this skill
-
-Inspect tools (`get_design_context`, `get_metadata`, `get_screenshot`, `search_design_system`,
-`get_variable_defs`) let the skill:
-- Look up matching design system components for code components
-- Verify the target Figma file structure before writing
-- Take screenshots to verify the output
-- Search for design tokens to apply to scratch-built elements
-
-When inspect tools are unavailable, DS component matching is skipped and components are noted
-as "unverified" in the spec output.
-
-### What "Write" tools means for this skill
-
-Write tools (`use_figma`, `create_new_file`, `whoami`) let the skill actually build frames,
-import components, and add native annotations directly in Figma. Without these, the skill
-produces a **Prototype Spec Document** — a detailed markdown artifact with the same information,
-suitable for async review in Notion/Confluence, sharing via Slack, or handing off to someone
-with Figma write access.
-
-### What "Code Connect" tools means for this skill
-
-Code Connect tools (`get_code_connect_map`, `get_code_connect_suggestions`,
-`get_context_for_code_connect`, `add_code_connect_map`, `send_code_connect_mappings`) let the
-skill verify exact code↔design component mappings and create new Code Connect links from the
-Figma output back to the prototype source. These are optional — the skill produces a complete
-Figma file without them.
-
 ---
 
 ## Figma MCP tools — by capability tier
@@ -112,6 +111,7 @@ Figma file without them.
   - Color tokens: `search_design_system(fileKey, query="primary", includeVariables=true)`
   - Styles: `search_design_system(fileKey, query="heading", includeStyles=true)`
 - **`Figma:get_variable_defs`** — Get exact values for design tokens (hex colors, pixel values).
+  Apply these to primitive elements to keep them visually on-system.
 
 ### Write tier tools
 - **`Figma:use_figma`** — Primary workhorse. Executes Figma Plugin API JavaScript to create
@@ -141,58 +141,42 @@ Figma file without them.
 
 Before anything else, determine which tier you're operating in and announce it to the user.
 
-**How to detect:**
-
-1. **Check for Inspect tools** — Attempt `Figma:get_metadata` on the target file (or any
-   file). If it succeeds, Inspect tools are available.
-
-2. **Check for Write tools** — Inspect the list of available tools for `use_figma`. If it
-   appears in your tool list, Write tools are available. You can also attempt a no-op
-   `use_figma` call; if it errors with "tool not found" rather than a runtime error, Write is
-   unavailable.
-
-3. **Check for Code Connect tools** — Check your tool list for `get_code_connect_map`. If
-   present, Code Connect tools are available.
-
-4. **Announce the tier** — Tell the user what you detected and what output you'll produce.
-   For example:
+1. **Check for Inspect tools** — Attempt `Figma:get_metadata` on the target file. If it
+   succeeds, Inspect tools are available.
+2. **Check for Write tools** — Check your tool list for `use_figma`.
+3. **Check for Code Connect tools** — Check your tool list for `get_code_connect_map`.
+4. **Announce the tier.** Example:
    > "I have Inspect + Write tools but no Code Connect. I'll build the full Figma file with
-   > native annotations. Code Connect linking will be skipped — you can do that separately if
-   > needed."
+   > native annotations. Code Connect linking will be skipped."
 
-   Or, for a read-only client:
-   > "I only have Inspect tools on this client — I can't write to Figma directly. I'll produce
-   > a Prototype Spec Document instead, which you can share for async review or hand off to
-   > someone with Figma write access."
-
-**Then route to the appropriate path:**
-
-- **Write tools available** → Continue to Phases 1–6 (full Figma build)
-- **Write tools unavailable** → Continue to Phases 1–3, then jump to [Prototype Spec Document](#prototype-spec-document-output-for-inspect-only-clients)
+**Route:**
+- Write tools available → Phases 1–6 (full Figma build)
+- Write tools unavailable → Phases 1–3, then [Prototype Spec Document](#prototype-spec-document-output-for-inspect-only-clients)
 
 ---
 
 ### Phase 1: Understand the prototype
 
-Before touching Figma, thoroughly analyze the prototype source code. This phase is the same
-regardless of which client tier you're on.
+Before touching Figma, thoroughly analyze the prototype source code.
 
 **1. Component inventory**
-Read the prototype files and list every UI component used. These typically come from the user's
-shared component library. For each component, note:
+Read the prototype files and list every UI component used. For each component, note:
 - The component name as used in code (e.g., `<Button variant="primary">`, `<Modal>`, `<DataTable>`)
 - Props/variants being used (size, state, variant)
 - Any component compositions (e.g., a Card containing a Header, Body, and ActionBar)
 
+**This inventory is the completeness checklist for Phase 4.** Every component listed here must
+appear in the Figma output.
+
 **2. Interaction flows**
-This is the most important part. Identify every distinct user flow in the prototype:
+Identify every distinct user flow in the prototype:
 - What triggers a state change? (click, hover, form submission, data load, etc.)
 - What are the before/after states?
 - Are there intermediate states? (loading, validating, animating)
 - What are the error/edge-case states? (empty, error, permission denied, timeout)
 - Are there branching paths? (success vs. failure, different user roles)
 
-Map these as a flow graph in your analysis. For example:
+Map these as a flow graph:
 ```
 Flow: "Create new item"
   1. Dashboard (default) → user clicks "+ New" button
@@ -211,70 +195,54 @@ Identify what stays constant across states vs. what changes.
 
 ### Phase 2: Map components to the Figma design system
 
-This phase bridges the code world and the Figma world. Adapt based on available tools.
+For every component in the Phase 1 inventory, determine whether it has a DS match.
+Every component must end up in one of two columns: **matched** or **build from primitives**.
+Neither column can be empty just because you couldn't find something.
 
-**If Inspect tools are available**, use both strategies below. **If not**, skip to the
-fallback at the end of this phase.
-
-**Strategy A: Design system search (component name → Figma component)**
-
-Search the target file's linked libraries for each code component:
+**Strategy A: Design system search (if Inspect tools available)**
 
 ```
 For each component in your inventory:
-  1. Search the design system: search_design_system(fileKey, query="Button")
-  2. If found → note the component key for later import via importComponentByKeyAsync
-  3. If found but wrong variant → note the closest match and plan to adjust
-  4. If not found → flag it for scratch creation
+  1. search_design_system(fileKey, query="Button", includeComponents=true)
+  2. If found → note the component key for importComponentByKeyAsync
+  3. If not found under that name → try alternate names (Alert/Banner/Notification/Toast, etc.)
+  4. If still not found → column: "build from primitives"
 ```
 
-Search broadly — the design system might name things differently than the code. If the code
-uses `<AlertBanner>`, the Figma library might call it "Alert", "Banner", "Notification", or
-"Toast". Try multiple search terms before concluding it's not there.
-
-Also search for design tokens:
+Also search for design tokens to use on primitive elements:
 - Color tokens: `search_design_system(fileKey, query="primary", includeVariables=true, includeComponents=false)`
 - Spacing tokens: `search_design_system(fileKey, query="spacing", includeVariables=true, includeComponents=false)`
 
 When you find relevant variables, call `Figma:get_variable_defs(fileKey, nodeId)` to get their
-exact values for use on scratch-built elements.
+exact hex/pixel values. Apply these to primitive elements to keep them visually on-system.
 
-**Strategy B: Code Connect reverse lookup (Code Connect tier only)**
+**Strategy B: Code Connect reverse lookup (if Code Connect tools available)**
 
-If Code Connect tools are available:
-
-1. Call `Figma:get_code_connect_map(fileKey, nodeId)` to check DS component ↔ code path mappings.
-2. Call `Figma:get_context_for_code_connect(fileKey, nodeId)` to get property/variant metadata —
-   this tells you exactly what props the Figma component supports, so you can configure
-   instances to match prototype states:
-   ```javascript
-   instance.setProperties({ "Variant": "Primary", "Size": "sm", "State": "Disabled" });
+1. For DS components you found, call `Figma:get_code_connect_map(fileKey, nodeId)` to confirm
+   the code ↔ Figma link.
+2. Call `Figma:get_context_for_code_connect(fileKey, nodeId)` to get the exact variant property
+   names the Figma component supports — e.g.:
    ```
-3. After building, call `Figma:get_code_connect_suggestions(fileKey, nodeId)` on built frames
-   and `Figma:send_code_connect_mappings` to save approved mappings.
+   { "Variant": ["Primary", "Secondary"], "Size": ["sm", "md", "lg"], "State": ["Default", "Disabled"] }
+   ```
+   This is essential for `setProperties()` in Phase 4. Without it, you're guessing prop names.
 
-**If Inspect tools are NOT available (fallback)**
+**Build the component mapping table:**
 
-Build the component mapping from code alone. For each component, record:
-- The code name (e.g., `<Button>`)
-- The likely Figma equivalent (infer from common naming conventions)
-- Mark all entries as "unverified — DS match not confirmed"
-
-**Build a component mapping table** (regardless of tier):
-
-| Code component | Figma DS match | Key | Code Connect | Status |
+| Code component | Figma DS match | Key | Code Connect | Build approach |
 |---|---|---|---|---|
-| `<Button variant="primary">` | Button | abc123 | ✅ `src/ui/Button.tsx` | Verified |
-| `<DataTable>` | Table | def456 | ✅ `src/ui/DataTable.tsx` | Verified |
-| `<CustomWidget>` | — | — | — | Scratch needed |
-| `<AlertBanner>` | Alert | — | ❓ | Unverified (no Inspect) |
+| `<Button variant="primary">` | Button | abc123 | ✅ `src/ui/Button.tsx` | Import + setProperties |
+| `<DataTable>` | Table | def456 | ✅ `src/ui/DataTable.tsx` | Import + setProperties |
+| `<CustomWidget>` | — | — | — | **Primitives** |
+| `<AlertBanner>` | — | — | — | **Primitives** |
+
+Every row must have a build approach. No row can be blank.
 
 ---
 
 ### Phase 3: Plan the Figma page structure
 
-Organize frames to tell the story of each flow. This phase is the same regardless of tier —
-you're planning structure, not building yet.
+Organize frames to tell the story of each flow.
 
 **Page structure:**
 ```
@@ -287,165 +255,209 @@ Page: "[Feature Name] — Prototype Flows"
   Section: "Flow 2: [Flow Name]"
     ...
   Section: "Component Reference" (optional)
-    Frame: Components built from scratch, for reviewer context
+    Frame: Primitive approximations, for reviewer context
 ```
 
 **Frame layout conventions:**
-- Use a consistent frame size (typically 1440×900 for desktop, 390×844 for mobile — match the
-  prototype's target viewport)
-- Arrange frames left-to-right within a flow, with branching paths stacked vertically
-- Leave ~200px gaps between frames for connector annotations
-- Use a section frame (large container) per flow to group related state frames
+- Consistent frame size (1440×900 desktop, 390×844 mobile — match the prototype's viewport)
+- Frames left-to-right within a flow, branching paths stacked vertically
+- ~200px gaps between frames, ~400px between flow sections
 
-**If Write tools are unavailable**, skip to [Prototype Spec Document](#prototype-spec-document-output-for-inspect-only-clients).
+If Write tools are unavailable, skip to [Prototype Spec Document](#prototype-spec-document-output-for-inspect-only-clients).
 
 ---
 
-### Phase 4: Build in Figma *(Write tier required)*
+### Phase 4: Build in Figma
 
-Execute the build using `Figma:use_figma`. Break it into manageable steps — don't try to
-build the entire file in a single Plugin API call.
+Execute the build using `Figma:use_figma`. Break it into manageable steps.
 
-**Before your first `use_figma` call:** Read `figma-patterns.md` for Plugin API patterns
-(font loading, auto-layout, text nodes, positioning). This avoids common gotchas.
+**Before your first `use_figma` call:** Read `figma-patterns.md` for Plugin API patterns.
 
 **Step-by-step build order:**
 
-1. **Inspect the target file** *(if Inspect tools available)* — Use
-   `Figma:get_metadata(fileKey, nodeId="0:1")` to see the existing page structure. Use
-   `Figma:get_design_context` on any existing frames to understand what's already there and
-   avoid overwriting content. *If Inspect is unavailable, skip this step and proceed.*
+**1. Inspect the target file** *(if Inspect tools available)*
 
-2. **Set up the page** — Via `Figma:use_figma`, create (or navigate to) the target page. Set
-   up the top-level layout structure.
+Use `Figma:get_metadata(fileKey, nodeId="0:1")` to see the existing page structure. Use
+`Figma:get_design_context` on existing frames to understand what's already there.
 
-3. **Import design system components** *(if Inspect tools found DS matches)* — For each
-   component with a confirmed Figma DS key, import it using `importComponentByKeyAsync(key)`
-   inside `use_figma`. Store references for reuse across frames.
+**2. Set up the page**
 
-   Configure instances using variant metadata from Phase 2:
-   ```javascript
-   instance.setProperties({ "Variant": "Primary", "Size": "sm", "State": "Disabled" });
-   ```
+Via `Figma:use_figma`, create or navigate to the target page.
 
-   *If Inspect was unavailable*, build all components from primitives (rectangles, text,
-   auto-layout frames) and add a "No DS match — Inspect unavailable" badge to each.
+**3. Build each flow, frame by frame**
 
-4. **Build each flow, frame by frame:**
-   - Create a section frame for the flow
-   - For each state in the flow:
-     a. Create a frame at the correct size
-     b. Compose the UI using imported component instances (`.createInstance()`)
-     c. Configure instance props/variants to match the prototype state
-     d. For components without DS matches, build from primitives — apply DS tokens if available
-     e. Name layers clearly — reviewers inspect the layer tree
+For each frame, build every element from the Phase 2 mapping table. Do not skip any.
 
-5. **Add interaction annotations using Figma's native annotation API** — This is the most
-   important step. Without this, reviewers just see static screens.
+For each element, choose the correct approach based on the mapping table:
 
-   Figma has a first-class annotation system that surfaces in Dev Mode. These are NOT colored
-   rectangles on the canvas — they are native Figma annotations that attach to specific layers,
-   appear in the Dev Mode sidebar, support markdown, and can be filtered by category.
+---
 
-   **Every interactive element in every frame MUST get an annotation.**
+**When the component HAS a DS match:**
 
-   **Step 5a: Set up annotation categories**
+```javascript
+// Import the component from the linked library
+const component = await figma.importComponentByKeyAsync("abc123");
+const instance = component.createInstance();
 
-   ```javascript
-   const interactionCat = await figma.annotations.addAnnotationCategoryAsync({
-     label: 'Interaction', color: 'blue'
-   });
-   const navigationCat = await figma.annotations.addAnnotationCategoryAsync({
-     label: 'Navigation', color: 'violet'
-   });
-   const stateCat = await figma.annotations.addAnnotationCategoryAsync({
-     label: 'State Change', color: 'teal'
-   });
-   const validationCat = await figma.annotations.addAnnotationCategoryAsync({
-     label: 'Validation', color: 'orange'
-   });
-   const errorCat = await figma.annotations.addAnnotationCategoryAsync({
-     label: 'Error Handling', color: 'red'
-   });
-   const edgeCaseCat = await figma.annotations.addAnnotationCategoryAsync({
-     label: 'Edge Case', color: 'pink'
-   });
-   const dataCat = await figma.annotations.addAnnotationCategoryAsync({
-     label: 'Data / API', color: 'green'
-   });
-   const a11yCat = await figma.annotations.addAnnotationCategoryAsync({
-     label: 'Accessibility', color: 'yellow'
-   });
-   ```
+// Configure the instance to match the prototype state
+// Use exact property names from get_context_for_code_connect
+instance.setProperties({ "Variant": "Primary", "Size": "md", "State": "Default" });
 
-   Available category colors: `'yellow'`, `'orange'`, `'red'`, `'pink'`, `'violet'`, `'blue'`,
-   `'teal'`, `'green'`.
+instance.x = 24;
+instance.y = 16;
+frame.appendChild(instance);
+```
 
-   **Step 5b: Annotate every interactive element**
+---
 
-   ```javascript
-   // Example: Annotating a "Save" button
-   saveButton.annotations = [
-     {
-       labelMarkdown: '**On click →** Validates all form fields.\n\n' +
-         '- If valid: shows loading spinner (→ Frame 1.3), saves via `POST /api/items`\n' +
-         '- If invalid: highlights error fields, shows inline errors (→ Frame 1.4b)\n\n' +
-         '*Debounced: 300ms cooldown after last click*',
-       categoryId: interactionCat.id
-     }
-   ];
+**When the component does NOT have a DS match — build from primitives:**
 
-   // Example: Annotating a form field
-   emailField.annotations = [
-     {
-       labelMarkdown: '**Validation rules:**\n- Required\n- Must match email regex\n' +
-         '- Uniqueness check via `GET /api/users/check-email`\n- Error shown on blur',
-       categoryId: validationCat.id
-     },
-     {
-       labelMarkdown: '**Keyboard:** Tab to next field. Enter submits form.',
-       categoryId: a11yCat.id
-     }
-   ];
+```javascript
+// Build a visual approximation from primitives.
+// NEVER call figma.createComponent() or figma.createComponentSet().
+// Use figma.createFrame() + auto-layout to approximate the component.
 
-   // Example: Annotating a loading state frame
-   loadingFrame.annotations = [
-     {
-       labelMarkdown: '**State: Loading**\n\nTriggered after successful validation. ' +
-         'Spinner replaces button text. All fields disabled.\n\n' +
-         '**Timeout:** 10s → shows error toast, re-enables form (→ Frame 1.4b)',
-       categoryId: stateCat.id
-     }
-   ];
-   ```
+// Example: approximating an <AlertBanner type="error"> with no DS match
+const alertFrame = figma.createFrame();
+alertFrame.name = "AlertBanner [no DS match]";
+alertFrame.layoutMode = 'HORIZONTAL';
+alertFrame.primaryAxisSizingMode = 'FIXED';
+alertFrame.counterAxisSizingMode = 'AUTO';
+alertFrame.resize(600, 1); // width fixed, height auto
+alertFrame.paddingTop = 12;
+alertFrame.paddingBottom = 12;
+alertFrame.paddingLeft = 16;
+alertFrame.paddingRight = 16;
+alertFrame.itemSpacing = 12;
+alertFrame.cornerRadius = 6;
+// Apply DS token if found, otherwise use a reasonable fallback
+alertFrame.fills = [{ type: 'SOLID', color: { r: 1, g: 0.94, b: 0.94 } }]; // light red
 
-   You can also pin design properties alongside annotations:
-   ```javascript
-   someNode.annotations = [
-     {
-       label: 'Max-width: 600px on desktop, full-width on mobile',
-       properties: [{ type: 'width' }, { type: 'maxWidth' }]
-     }
-   ];
-   ```
+await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+const alertText = figma.createText();
+alertText.fontName = { family: "Inter", style: "Regular" };
+alertText.characters = "Something went wrong. Please try again.";
+alertText.fontSize = 14;
+alertText.fills = [{ type: 'SOLID', color: { r: 0.6, g: 0.1, b: 0.1 } }];
+alertText.textAutoResize = 'WIDTH_AND_HEIGHT';
+alertFrame.appendChild(alertText);
 
-   **Step 5c: Annotation checklist (run for every frame)**
+frame.appendChild(alertFrame);
 
-   - [ ] **Clickable elements**: What happens on click? Where does the user go?
-   - [ ] **Form fields**: Validation rules, required/optional, input masks, character limits
-   - [ ] **State triggers**: What caused this state? How does the user leave it?
-   - [ ] **Loading behaviors**: Duration, timeout handling, what's disabled during load
-   - [ ] **Error states**: What errors are possible? Recovery paths?
-   - [ ] **Empty states**: When does this appear? What action moves the user forward?
-   - [ ] **Conditional visibility**: What determines if this element shows/hides?
-   - [ ] **Data dependencies**: What API calls? What if data is missing/slow/stale?
-   - [ ] **Keyboard/a11y**: Tab order, keyboard shortcuts, screen reader considerations
-   - [ ] **Animations/transitions**: Duration, easing, what triggers them
+// Add a "No DS match" badge so reviewers can identify this element
+await addNoDsMatchBadge(alertFrame);
+```
 
-   The annotation density should be HIGH — a frame with 5 interactive elements should have
-   at minimum 5 annotations.
+See `figma-patterns.md` for the `addNoDsMatchBadge` helper and more primitive patterns.
 
-For flow connectors between frames (visual aids, separate from native annotations):
+---
+
+**Completeness check after each frame:**
+
+Before moving to the next frame, verify that every element from the Phase 2 inventory that
+should appear in this frame is present in the layer tree. If any are missing, add them now —
+either as DS instances or primitives — before proceeding.
+
+---
+
+**4. Add interaction annotations using Figma's native annotation API**
+
+This is what makes the output useful for async review. Without this, reviewers just see static
+screens with no indication of what's interactive or how states connect.
+
+Figma's annotation system surfaces directly in Dev Mode — not colored rectangles on the canvas.
+Annotations attach to specific layers, appear in the Dev Mode sidebar, support markdown, and
+can be filtered by category.
+
+**Every interactive element in every frame MUST get an annotation.**
+
+**Step 4a: Set up annotation categories**
+
+```javascript
+const interactionCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Interaction', color: 'blue'
+});
+const navigationCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Navigation', color: 'violet'
+});
+const stateCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'State Change', color: 'teal'
+});
+const validationCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Validation', color: 'orange'
+});
+const errorCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Error Handling', color: 'red'
+});
+const edgeCaseCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Edge Case', color: 'pink'
+});
+const dataCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Data / API', color: 'green'
+});
+const a11yCat = await figma.annotations.addAnnotationCategoryAsync({
+  label: 'Accessibility', color: 'yellow'
+});
+```
+
+Available colors: `'yellow'`, `'orange'`, `'red'`, `'pink'`, `'violet'`, `'blue'`, `'teal'`,
+`'green'`.
+
+**Step 4b: Annotate every interactive element**
+
+```javascript
+// Annotate a button
+saveButton.annotations = [
+  {
+    labelMarkdown: '**On click →** Validates all form fields.\n\n' +
+      '- If valid: shows loading spinner (→ Frame 1.3), then `POST /api/items`\n' +
+      '- If invalid: highlights error fields, shows inline errors (→ Frame 1.4b)\n\n' +
+      '*Debounced: 300ms cooldown after last click*',
+    categoryId: interactionCat.id
+  }
+];
+
+// Annotate a form field
+emailField.annotations = [
+  {
+    labelMarkdown: '**Validation rules:**\n- Required\n- Must match email regex\n' +
+      '- Uniqueness check via `GET /api/users/check-email`\n- Error shown on blur',
+    categoryId: validationCat.id
+  },
+  {
+    labelMarkdown: '**Keyboard:** Tab to next field. Enter submits form.',
+    categoryId: a11yCat.id
+  }
+];
+
+// Annotate a loading state frame
+loadingFrame.annotations = [
+  {
+    labelMarkdown: '**State: Loading**\n\nTriggered after successful validation.\n' +
+      'Spinner replaces button text. All fields disabled.\n\n' +
+      '**Timeout:** 10s → error toast, form re-enabled (→ Frame 1.4b)',
+    categoryId: stateCat.id
+  }
+];
+```
+
+**Step 4c: Annotation checklist (run for every frame)**
+
+- [ ] **Clickable elements**: What happens on click? Where does the user go?
+- [ ] **Form fields**: Validation rules, required/optional, input masks, character limits
+- [ ] **State triggers**: What caused this state? How does the user leave it?
+- [ ] **Loading behaviors**: Duration, timeout handling, what's disabled during load
+- [ ] **Error states**: What errors are possible? How shown? Recovery paths?
+- [ ] **Empty states**: When does this appear? What action moves the user forward?
+- [ ] **Conditional visibility**: What determines if this element shows/hides?
+- [ ] **Data dependencies**: What API calls? What if data is missing/slow/stale?
+- [ ] **Keyboard/a11y**: Tab order, keyboard shortcuts, screen reader considerations
+- [ ] **Animations/transitions**: Duration, easing, what triggers them
+
+The annotation density should be HIGH — a frame with 5 interactive elements should have
+at minimum 5 annotations.
+
+For flow connectors between frames:
 
 ```javascript
 const arrow = figma.createLine();
@@ -457,76 +469,71 @@ arrow.strokes = [{ type: 'SOLID', color: { r: 0.2, g: 0.4, b: 1 } }];
 arrow.strokeWeight = 2;
 arrow.strokeCap = 'ARROW_EQUILATERAL';
 arrow.annotations = [
-  { labelMarkdown: '**Transition:** On successful save (HTTP 200)', categoryId: navigationCat.id }
+  {
+    labelMarkdown: '**Transition:** On successful save (HTTP 200)',
+    categoryId: navigationCat.id
+  }
 ];
 ```
 
 ---
 
-### Phase 5: Add a flow overview *(Write tier required)*
+### Phase 5: Add a flow overview
 
 Create a summary frame at the top of the page:
 
 - **Feature name and description**
 - **Flow list** — numbered list of flows with brief descriptions
-- **Legend** — annotation categories and what reviewers should look for:
-  - Blue (Interaction) = click/tap/gesture triggers and results
-  - Violet (Navigation) = page/view transitions and routing
-  - Teal (State Change) = state descriptions and transition conditions
-  - Orange (Validation) = form validation rules and constraints
-  - Red (Error Handling) = error states, recovery paths, fallbacks
-  - Pink (Edge Case) = non-obvious behaviors, race conditions, timing
-  - Green (Data / API) = data sources, endpoints, loading/caching
-  - Yellow (Accessibility) = keyboard behavior, screen reader, a11y
+- **Legend** — annotation categories:
+  - Blue (Interaction) = click/tap triggers and results
+  - Violet (Navigation) = transitions and routing
+  - Teal (State Change) = state descriptions and conditions
+  - Orange (Validation) = form rules and constraints
+  - Red (Error Handling) = errors, recovery, fallbacks
+  - Pink (Edge Case) = timing quirks, race conditions
+  - Green (Data / API) = endpoints, loading, caching
+  - Yellow (Accessibility) = keyboard, screen reader, a11y
   - Note: Reviewers can **filter by category** in Dev Mode
-- **Open questions** — flag any ambiguous behaviors for reviewers
+- **Open questions** — flag ambiguous behaviors explicitly
+- **Components without DS matches** — list any elements built from primitives so the design
+  team knows what DS components are still needed
 
 ---
 
 ### Phase 6: Verify, link, and present
 
-**6a. Visual verification** *(Inspect tier required)*
+**6a. Visual verification** *(Inspect tools available)*
 
-If Inspect tools are available, take screenshots to verify before presenting:
-- Use `Figma:get_screenshot(fileKey, nodeId)` on the overview frame and 2-3 state frames
-- Check frame sizing, spacing, and annotation legibility
-- Verify component instances look correct
+Take screenshots of the output to verify:
+- Use `Figma:get_screenshot(fileKey, nodeId)` on the overview frame and 2–3 state frames
+- Verify all elements from the component inventory are present (completeness check)
+- Verify no unexpected components were created in the file's local assets
+- Check that DS component instances look correct (right variants, right states)
+- Check that primitive approximations are visually reasonable
 
-*If Inspect tools are unavailable, skip this step and note it to the user.*
+*If Inspect tools are unavailable, skip and note it to the user.*
 
-**6b. Code Connect linking** *(Code Connect tier only, optional)*
+**6b. Code Connect linking** *(Code Connect tier, optional)*
 
-If Code Connect tools are available and the user wants to link the Figma output back to the
-prototype's source code:
-
-1. Call `Figma:get_code_connect_suggestions(fileKey, nodeId)` on the built frames.
-2. Present suggestions to the user for review.
-3. Use `Figma:send_code_connect_mappings(fileKey, mappings, nodeId)` to save approved mappings.
-   Use `label="React"` (or appropriate framework) and set `source` to the component path.
-
-*If Code Connect tools are unavailable, skip this step. The Figma file is complete without it.*
+1. `Figma:get_code_connect_suggestions(fileKey, nodeId)` on the built frames
+2. Present suggestions for review
+3. `Figma:send_code_connect_mappings` to save approved ones
 
 **6c. Present to user**
 
 Share the Figma file URL and summarize:
-- How many flows were documented
-- How many total state frames
-- Which components came from the design system vs. built from scratch
-- Whether Code Connect mappings were created
-- Any open questions flagged for reviewers
-- Any steps skipped due to client capability limits (be explicit about what was skipped and why)
+- How many flows documented, how many total state frames
+- Which components used DS instances vs. built from primitives
+- List of all components built from primitives (DS gaps for the design team)
+- Code Connect links created (if any)
+- Open questions flagged for reviewers
+- Any steps skipped due to client capability limits
 
 ---
 
 ## Prototype Spec Document — output for Inspect-only clients
 
-When Write tools are unavailable, produce a structured markdown document with the following
-sections. The goal is the same as the Figma output: make implicit prototype knowledge explicit
-so cross-functional partners can review asynchronously.
-
-Output the spec document directly in the chat (or offer to write it to a file). The content
-should be detailed enough that a designer with Figma access could build the frames from it, or
-that a PM could use it for async feedback without needing to run the prototype.
+When Write tools are unavailable, produce a structured markdown document.
 
 ```markdown
 # [Feature Name] — Prototype Spec
@@ -539,10 +546,10 @@ that a PM could use it for async feedback without needing to run the prototype.
 
 ## Overview
 
-[2-3 sentence description of what the prototype demonstrates and why it exists]
+[2–3 sentence description of what the prototype demonstrates]
 
 **Open questions for reviewers:**
-- [List any ambiguous behaviors, design decisions, or things that need input]
+- [List ambiguous behaviors or design decisions needing input]
 
 ---
 
@@ -551,125 +558,86 @@ that a PM could use it for async feedback without needing to run the prototype.
 ### Flow 1: [Flow Name]
 
 **Goal:** [What the user is trying to accomplish]
-**Entry point:** [What triggers this flow — a button click, page load, etc.]
+**Entry point:** [What triggers this flow]
 
 #### States
 
 **1.1 — [State name]**
 - **Frame size:** 1440×900 (desktop) / 390×844 (mobile)
-- **Layout:** [Describe the overall layout — nav, sidebar, content area, overlays]
-- **Key components:**
-  - [Component name] ([code name: `<Button variant="primary">`]) → [Figma DS match if known]
-  - [Component name] → [Figma DS match if known, or "No DS match confirmed"]
+- **Layout:** [Describe the overall layout]
+- **Components:**
+  - [Component name] (`<Button variant="primary">`) → DS match: Button/Primary [verified] or [unverified]
+  - [Component name] → No DS match: build from primitives
 
 - **Interactions:**
   | Element | Trigger | Result | Notes |
   |---|---|---|---|
-  | Save button | Click | Validates form → loading state (→ 1.2) | Debounced 300ms |
-  | Cancel button | Click | Closes modal, returns to dashboard | No confirmation |
-  | Email field | Blur | Validates email format | Shows inline error if invalid |
+  | Save button | Click | Validates form → loading (→ 1.2) | Debounced 300ms |
 
-- **State annotations:**
-  - **Interaction:** [Describe click/tap triggers and results]
-  - **Validation:** [List form validation rules]
-  - **Data / API:** [List API calls, endpoints, data sources]
-  - **Error Handling:** [What errors can occur? How are they shown? Recovery paths?]
-  - **Edge Cases:** [Non-obvious behaviors, timing, race conditions]
-  - **Accessibility:** [Tab order, keyboard shortcuts, screen reader considerations]
-
-**1.2 — [Next state name]**
-- **Triggered by:** [What caused this state]
-- **Differences from 1.1:** [What changed — this avoids re-documenting the whole layout]
-- **Key components:** [Only components that changed]
-- **Interactions:** [Only new or changed interactions]
-- **Annotations:** [As above]
-
-**1.3a — [Success path]**
-[same structure]
-
-**1.3b — [Error/failure path]**
-[same structure]
+- **Annotations:**
+  - **Interaction:** [click targets and results]
+  - **Validation:** [form rules]
+  - **Data / API:** [endpoints, data sources]
+  - **Error Handling:** [errors, recovery]
+  - **Edge Cases:** [non-obvious behavior]
+  - **Accessibility:** [tab order, keyboard shortcuts]
 
 ---
 
-### Flow 2: [Flow Name]
-[same structure]
+## Component inventory
 
----
-
-## Component Inventory
-
-| Code component | Props used | Likely Figma DS match | Confidence | Notes |
+| Code component | Props | DS match | Confidence | Build approach |
 |---|---|---|---|---|
-| `<Button>` | variant="primary", size="md" | Button / Primary | High | Common component |
-| `<DataTable>` | columns, rows, onSort | Table | Medium | May be named differently |
-| `<CustomWidget>` | (custom) | None — build from scratch | — | Not in DS |
-
-*Note: DS matches are inferred from code — not confirmed via search_design_system (Inspect
-tools not available on this client). Verify in Figma before building.*
+| `<Button>` | variant="primary", size="md" | Button/Primary | High | Import + setProperties |
+| `<DataTable>` | columns, rows | Table | Medium | Import + setProperties |
+| `<CustomWidget>` | (custom) | None | — | Primitives |
 
 ---
 
 ## Figma build guide
 
-*For whoever implements this in Figma:*
+*For whoever builds this in Figma:*
 
-**Page structure:**
+**Page:** "[Feature Name] — Prototype Flows"
+**Frame sizes:** 1440×900 desktop / 390×844 mobile
+**Layout:** Left-to-right per flow, branches stacked vertically, 200px gaps
+
+**Components to import from DS:** [list from inventory above]
+**Components to build from primitives:** [list from inventory above]
+
+**Important:** For components without DS matches, build from primitives (frames, rectangles,
+text, auto-layout). Do NOT call `figma.createComponent()`. Do NOT skip the element.
 ```
-Page: "[Feature Name] — Prototype Flows"
-  Section: "Flow 1: [Name]" — frames 1.1 through 1.3b, left-to-right, branches vertical
-  Section: "Flow 2: [Name]" — ...
-```
-
-**Frame sizes:** [Desktop: 1440×900 / Mobile: 390×844]
-**Gap between frames:** 200px
-**Gap between flow sections:** 400px
-
-**Annotation categories to create:**
-- Interaction (blue), Navigation (violet), State Change (teal), Validation (orange),
-  Error Handling (red), Edge Case (pink), Data / API (green), Accessibility (yellow)
-
-**Components to import from DS:** [list from component inventory above]
-**Components to build from scratch:** [list from component inventory above]
-```
-
-**Tips for producing a good Prototype Spec Document:**
-- Be as specific as possible about interaction behavior — this replaces the annotations that
-  would go into a Figma file
-- List every interactive element in every state, not just the primary ones
-- Include API endpoint names, response shapes, and timing details when you know them
-- Flag open questions explicitly — these are the most valuable part for async review
-- Use the same state-numbering scheme (1.1, 1.2, 1.3a, 1.3b) that the Figma build guide
-  describes, so the document and any future Figma file stay in sync
 
 ---
 
 ## Important principles
 
-**Optimize for reviewer comprehension, not designer precision.** The point is async feedback
-from PMs, engineers, and other stakeholders — not a production-ready design file. Clear labels,
-obvious flow direction, and thorough annotations matter more than pixel-perfect spacing.
+**Never create new Figma components.** `figma.createComponent()` pollutes the design system.
+Unmatched elements always get primitive approximations instead.
 
-**Annotate generously — this is the core deliverable.** The prototype contains implicit
-knowledge — state transitions, edge cases, timing, conditional logic — that isn't visible in a
-static frame. Every native Figma annotation you add (or every annotation entry in the spec doc)
-saves a Slack thread. When in doubt, annotate.
+**Never skip a prototype element.** Every element in the component inventory must appear in
+the Figma output. Primitives are always an acceptable fallback.
 
-**Respect the design system.** Using actual Figma DS components (vs. drawing rectangles that
-look like buttons) means reviewers see familiar patterns and can focus on the new interactions
-rather than decoding the visual language.
+**Optimize for reviewer comprehension, not designer precision.** Clear labels, obvious flow
+direction, and thorough annotations matter more than pixel-perfect spacing.
 
-**Name everything.** Frame names, layer names, annotation labels — these show up in Figma's
-layer panel and comments. "Frame 47" is useless; "2.3a — Save success with toast" tells a
-reviewer exactly where they are.
+**Annotate generously — this is the core deliverable.** Every native Figma annotation you add
+saves a Slack thread. A frame without annotations is just a screenshot of a UI. When in doubt,
+annotate. Use `node.annotations = [...]` on actual interactive elements, not colored rectangles
+on the canvas.
 
-**Handle missing components gracefully.** When a prototype component has no DS match, build
-from primitives but flag it visually (dashed border or "No DS component" badge) so reviewers
-and designers know this needs design system work.
+**Respect the design system.** Use DS component instances for matched components — this means
+reviewers see familiar patterns and can focus on the new interactions rather than decoding the
+visual language.
 
-**Be explicit about tier limitations.** If you skipped DS search, visual verification, or Code
-Connect because your client doesn't support those tools, say so in your summary. The user
-should know what was skipped and why, not assume it was done.
+**Name everything.** Frame names, layer names, annotation labels show up in the layer panel and
+Dev Mode. "Frame 47" is useless; "2.3a — Save success with toast" tells a reviewer exactly
+where they are.
+
+**Be explicit about DS gaps.** When components are built from primitives, list them in the
+summary. This turns unmatched components from a silent failure into actionable signal for the
+design team.
 
 ---
 
@@ -677,21 +645,19 @@ should know what was skipped and why, not assume it was done.
 
 - **Prototype uses responsive layouts**: Pick the primary breakpoint and document it. If
   mobile vs. desktop flows differ significantly, create separate flow sections for each.
-- **Prototype has many micro-interactions**: Group related micro-interactions into a single
-  annotated frame rather than exploding every hover state into its own frame. Use annotations
-  to describe the micro-interaction behavior.
-- **Prototype includes data-dependent states**: Create frames showing representative data
-  states (empty, few items, many items, long text) rather than just the "happy path" with
-  perfect data.
-- **Large prototypes**: For prototypes with 5+ distinct flows, prioritize. Ask the user which
-  flows are most important for review and start with those. You can always add more flows in
-  follow-up passes.
+- **Prototype has many micro-interactions**: Group micro-interactions into a single annotated
+  frame rather than exploding every hover state. Use annotations to describe micro-interaction
+  behavior.
+- **Prototype includes data-dependent states**: Create frames showing empty, few-items, and
+  many-items states rather than just the happy path with perfect data.
+- **Large prototypes (5+ flows)**: Ask the user which flows are highest priority and start
+  there. You can always add more in follow-up passes.
 
 ---
 
 ## Reference: Figma Plugin API patterns
 
-See `figma-patterns.md` for common Figma Plugin API patterns used in this skill, including
-auto-layout configuration, text styling, component instance creation, and native annotation
-setup. Read this reference before your first `use_figma` call if you're unsure about any API
-pattern. *(Only needed for Write-tier clients.)*
+See `figma-patterns.md` for Plugin API patterns — frame creation, component importing,
+primitive construction for unmatched elements, the `addNoDsMatchBadge` helper, auto-layout,
+text nodes, and annotation setup. Read this before your first `use_figma` call.
+*(Write-tier clients only.)*
