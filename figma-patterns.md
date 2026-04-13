@@ -3,6 +3,10 @@
 Common patterns for building prototype-to-Figma output. Read this before your first
 `use_figma` call in a session.
 
+> **Write-tier clients only.** These patterns require `use_figma` (Figma Plugin API access).
+> If your client only supports Inspect tools, refer to the Prototype Spec Document section in
+> `SKILL.md` instead.
+
 ## Table of Contents
 1. Font loading
 2. Creating frames with auto-layout
