@@ -137,17 +137,43 @@ and automatically uses the best possible workflow for your client.
 
 ## The workflow
 
-### Phase 0: Detect available capabilities
+### Phase 0: Resolve target file and detect capabilities
 
-Before anything else, determine which tier you're operating in and announce it to the user.
+#### Step 0a: Resolve the target Figma file
 
-1. **Check for Inspect tools** — Attempt `Figma:get_metadata` on the target file. If it
-   succeeds, Inspect tools are available.
+Do this before any other step.
+
+**If the user provided a Figma file URL:**
+Extract the `fileKey` from the URL and use it throughout the workflow.
+- `figma.com/design/:fileKey/...` → use `:fileKey`
+- `figma.com/board/:fileKey/...` → FigJam file, use `:fileKey`
+
+**If the user did NOT provide a Figma file URL:**
+Create a new file for them automatically — do not ask them for a link.
+
+```
+1. Call Figma:whoami to get the authenticated user's planKey
+2. Call Figma:create_new_file(name="[Feature Name] — Prototype Flows", planKey=<planKey>)
+3. Use the returned fileKey for all subsequent operations
+4. Share the new file URL with the user at the end of Phase 6
+```
+
+Never block on a missing file URL. If the user hasn't provided one, create the file.
+
+#### Step 0b: Detect available capabilities
+
+1. **Check for Inspect tools** — Attempt `Figma:get_metadata` on the target file (either
+   the one the user provided or the newly created one). If it succeeds, Inspect tools are
+   available.
 2. **Check for Write tools** — Check your tool list for `use_figma`.
 3. **Check for Code Connect tools** — Check your tool list for `get_code_connect_map`.
-4. **Announce the tier.** Example:
-   > "I have Inspect + Write tools but no Code Connect. I'll build the full Figma file with
-   > native annotations. Code Connect linking will be skipped."
+4. **Announce what you're doing.** Example (new file):
+   > "No Figma file provided — I've created a new one for you. I'll build the prototype
+   > flows there and share the link when done."
+
+   Example (existing file):
+   > "Got it — I'll add the prototype flows to your existing file. I have Inspect + Write
+   > tools; Code Connect linking will be skipped."
 
 **Route:**
 - Write tools available → Phases 1–6 (full Figma build)
@@ -521,7 +547,10 @@ Take screenshots of the output to verify:
 
 **6c. Present to user**
 
-Share the Figma file URL and summarize:
+Share the Figma file URL and summarize. **Always include the file URL** — especially when
+a new file was created in Phase 0 (the user has no other way to find it).
+
+- **Figma file URL** — direct link to the file (or the specific page if added to an existing file)
 - How many flows documented, how many total state frames
 - Which components used DS instances vs. built from primitives
 - List of all components built from primitives (DS gaps for the design team)
