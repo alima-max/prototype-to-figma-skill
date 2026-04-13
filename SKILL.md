@@ -181,7 +181,7 @@ Never block on a missing file URL. If the user hasn't provided one, create the f
 
 ---
 
-### Phase 1: Understand the prototype
+### Phase 1a: Analyze the prototype
 
 Before touching Figma, thoroughly analyze the prototype source code.
 
@@ -213,15 +213,101 @@ Flow: "Create new item"
   5b. Creation modal (with error banner) ← validation error
 ```
 
+For each flow, also note: the **feature category** it belongs to (e.g., "Core Purchase",
+"Account", "Order Management"), a **one-sentence purpose** describing what a reviewer would
+learn from it, and a **state count** including all branches and error paths. This is the input
+to Phase 1b.
+
 **3. Layout and structure**
 Note the overall page structure: navigation, sidebars, content areas, overlays.
 Identify what stays constant across states vs. what changes.
 
 ---
 
+### Phase 1b: Present scope, get selection, confirm
+
+**Skip this phase if the prototype has 2 or fewer flows.** In that case, proceed directly to
+Phase 2 with all flows included and note: "Found [N] flow(s) — proceeding to build the full
+file."
+
+For prototypes with 3 or more flows, run all three steps below before touching Phase 2.
+
+#### Step 1: Present the discovery summary
+
+Present this to the user immediately after completing Phase 1a:
+
+```
+## Prototype analysis complete — [X] flows found
+
+Before building, let's choose which flows to include so the Figma file
+stays focused and easy to review.
+
+### Flows by category
+
+**[Category A — e.g., Core Purchase]**
+  1. [Flow name] — [one-sentence purpose] · [N] states
+  2. [Flow name] — [one-sentence purpose] · [N] states
+
+**[Category B — e.g., Account]**
+  3. [Flow name] — [one-sentence purpose] · [N] states
+  4. [Flow name] — [one-sentence purpose] · [N] states
+
+**[Category C — e.g., Error & Edge Cases]**
+  5. [Flow name] — [one-sentence purpose] · [N] states
+
+Total if all included: ~[X] frames across [Y] flows.
+```
+
+Category names are inferred from the prototype's feature areas — never generic labels like
+"Group 1". State counts include all branches. The `~` signals the frame count is an estimate.
+
+#### Step 2: Ask one combined question
+
+```
+**Which flows do you want, and how much detail?**
+
+1. **Which flows?** Reply with numbers, names, a category, "all", or a limit —
+   e.g., "1, 3, 5" · "the checkout category" · "top 3" · "all"
+
+2. **How much detail?**
+   — **Happy path** — successful flow only, fewer frames
+   — **All states** — includes errors and edge cases (default)
+```
+
+**Stop here. Do not proceed to Phase 2 until the user replies.**
+
+#### Step 3: Interpret and confirm
+
+After the user replies, state your interpretation explicitly and proceed. No yes/no gate needed.
+
+```
+Got it. Here's what I'll build:
+
+**Flows:** [list selected flow names]
+**Detail:** [Happy path only / All states including errors]
+**Estimated frames:** ~[N] frames
+**Target:** [file name / page]
+
+Starting Phase 2. (You can re-run the skill later to add the remaining flows.)
+```
+
+**Edge cases:**
+
+| Situation | Handling |
+|---|---|
+| User says "all" | Accept it, confirm with frame count estimate, proceed |
+| Vague answer ("the main ones") | Interpret using prototype context — prefer flows that represent the primary user goal, appear earlier in the journey, or have more states. State the interpretation explicitly: "I'm taking 'main flows' to mean X, Y, Z — let me know if you meant something different." |
+| Depth question not answered | Default to **all states** |
+| User wants more flows later | Already covered in the confirmation note above |
+
+---
+
 ### Phase 2: Map components to the Figma design system
 
-For every component in the Phase 1 inventory, determine whether it has a DS match.
+Work only with the flows confirmed in Phase 1b. During component mapping, only map components
+that appear in selected flows — components used exclusively in omitted flows can be skipped.
+
+For every component in the Phase 1a inventory (for selected flows), determine whether it has a DS match.
 Every component must end up in one of two columns: **matched** or **build from primitives**.
 Neither column can be empty just because you couldn't find something.
 
@@ -268,7 +354,7 @@ Every row must have a build approach. No row can be blank.
 
 ### Phase 3: Plan the Figma page structure
 
-Organize frames to tell the story of each flow.
+Organize frames for the **selected flows only** (as confirmed in Phase 1b). Do not create placeholder sections for omitted flows.
 
 **Page structure:**
 ```
@@ -523,6 +609,9 @@ Create a summary frame at the top of the page:
 - **Open questions** — flag ambiguous behaviors explicitly
 - **Components without DS matches** — list any elements built from primitives so the design
   team knows what DS components are still needed
+- **Scope note** — if flows were omitted during Phase 1b selection, list them under "Not
+  included in this review" with the note "These flows can be added in a follow-up pass by
+  re-running the prototype-to-figma skill." Omit this section if all flows were included.
 
 ---
 
@@ -679,8 +768,7 @@ design team.
   behavior.
 - **Prototype includes data-dependent states**: Create frames showing empty, few-items, and
   many-items states rather than just the happy path with perfect data.
-- **Large prototypes (5+ flows)**: Ask the user which flows are highest priority and start
-  there. You can always add more in follow-up passes.
+
 
 ---
 
