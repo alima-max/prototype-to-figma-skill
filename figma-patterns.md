@@ -8,152 +8,293 @@ Common patterns for building prototype-to-Figma output. Read this before your fi
 > `SKILL.md` instead.
 
 ## Table of Contents
-1. Creating viewport-sized frames
-2. Placing screenshots as image nodes
-3. Transparent hotspot overlays (for annotating regions within a screenshot)
-4. Native Figma Dev Mode annotations
-5. Flow arrows and connectors
-6. Section containers
-7. State badge overlays
-8. Positioning and spacing
-9. Annotation category reference
-10. Font loading (for labels and badges)
+1. Font loading
+2. Creating frames
+3. Importing DS components (matched elements)
+4. Building from primitives (unmatched elements)
+5. The "No DS match" badge
+6. Native Figma Dev Mode annotations
+7. Flow arrows and connectors
+8. Section containers
+9. Positioning and spacing
+10. Annotation category reference
 
 ---
 
-## 1. Creating viewport-sized frames
+## 1. Font loading
 
-Every state in the prototype gets one frame. The frame holds the screenshot and any hotspot
-overlays on top of it.
+Always load fonts before setting any text character. Inter is the standard Figma font.
 
 ```javascript
-// Desktop frame (1440×900)
+await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+await figma.loadFontAsync({ family: "Inter", style: "Semi Bold" });
+await figma.loadFontAsync({ family: "Inter", style: "Bold" });
+```
+
+Note: "Semi Bold" has a space (not "SemiBold"). Same for "Extra Bold".
+
+---
+
+## 2. Creating frames
+
+Every state in the prototype gets one top-level frame.
+
+```javascript
+// Desktop (1440×900)
 const frame = figma.createFrame();
 frame.name = "1.1 — Dashboard default";
 frame.resize(1440, 900);
-frame.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }]; // white background
-frame.clipsContent = true;
+frame.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
 
-// Mobile frame (390×844, iPhone 14 Pro)
+// Mobile (390×844, iPhone 14 Pro)
 const mobileFrame = figma.createFrame();
 mobileFrame.name = "1.1 — Dashboard default (mobile)";
 mobileFrame.resize(390, 844);
 mobileFrame.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
-```
 
-Match the frame dimensions to the prototype's viewport size.
+// Auto-layout container inside a frame
+const container = figma.createFrame();
+container.name = "Header";
+container.layoutMode = 'HORIZONTAL';
+container.primaryAxisSizingMode = 'FIXED';
+container.counterAxisSizingMode = 'AUTO';
+container.resize(1440, 1); // height auto-expands
+container.paddingTop = 16;
+container.paddingBottom = 16;
+container.paddingLeft = 24;
+container.paddingRight = 24;
+container.itemSpacing = 12;
+container.fills = [{ type: 'SOLID', color: { r: 0.97, g: 0.97, b: 0.97 } }];
+```
 
 ---
 
-## 2. Placing screenshots as image nodes
+## 3. Importing DS components (matched elements)
 
-This is the core operation. Each frame gets one full-frame screenshot as its base layer.
-Do NOT build the UI from Figma components — place the actual rendered screenshot.
-
-### From a URL (hosted image or data URL)
+Use this for every component that has a confirmed DS match from `search_design_system`.
 
 ```javascript
-const image = await figma.createImageAsync("https://example.com/screenshot.png");
+// Import a single component by its key
+const component = await figma.importComponentByKeyAsync("component_key_here");
+const instance = component.createInstance();
 
-const imageNode = figma.createRectangle();
-imageNode.name = "Screenshot";
-imageNode.resize(frame.width, frame.height);
-imageNode.x = 0;
-imageNode.y = 0;
-imageNode.fills = [{
-  type: 'IMAGE',
-  scaleMode: 'FILL',
-  imageHash: image.hash
-}];
-frame.appendChild(imageNode);
+// Set variant/property values using exact names from get_context_for_code_connect
+// e.g., { "Variant": ["Primary", "Secondary"], "Size": ["sm", "md", "lg"] }
+instance.setProperties({ "Variant": "Primary", "Size": "md", "State": "Default" });
+
+instance.x = 24;
+instance.y = 16;
+parentFrame.appendChild(instance);
 ```
 
-### From raw bytes (base64-decoded Uint8Array)
+For component sets (variants grouped together):
 
 ```javascript
-// imageBytes is a Uint8Array of the PNG/JPEG binary data
-const image = figma.createImage(imageBytes);
-
-const imageNode = figma.createRectangle();
-imageNode.name = "Screenshot";
-imageNode.resize(frame.width, frame.height);
-imageNode.x = 0;
-imageNode.y = 0;
-imageNode.fills = [{
-  type: 'IMAGE',
-  scaleMode: 'FILL',
-  imageHash: image.hash
-}];
-frame.appendChild(imageNode);
+const componentSet = await figma.importComponentSetByKeyAsync("set_key_here");
+const variant = componentSet.defaultVariant; // or find a specific one:
+const specific = componentSet.findChild(n => n.name === "Variant=Primary, Size=Medium");
+if (specific?.type === "COMPONENT") {
+  const inst = specific.createInstance();
+  parentFrame.appendChild(inst);
+}
 ```
 
-### Scale modes
-
-- `'FILL'` — fills the frame, may crop edges. Use when screenshot exactly matches frame size.
-- `'FIT'` — fits entirely within frame with letterboxing. Use when aspect ratio differs.
-- `'CROP'` — you control the transform. Avoid unless you need fine control.
-
-For pixel-perfect output, always capture the screenshot at the exact frame dimensions so
-`'FILL'` produces no distortion.
+> **Never call `figma.createComponent()` or `figma.createComponentSet()`.**
+> These create new master components in the Figma file and pollute the design system.
+> Only use `importComponentByKeyAsync` for DS components.
 
 ---
 
-## 3. Transparent hotspot overlays
+## 4. Building from primitives (unmatched elements)
 
-Hotspots are transparent frames placed over interactive regions within the screenshot. They
-have no visible fill or stroke — they're purely annotation targets. Reviewers can click them
-in Dev Mode to see interaction annotations for that specific element.
+When a prototype component has no DS match, approximate it visually using plain frames,
+rectangles, and text. The goal is to make reviewers understand the intent — not to be
+pixel-perfect. Always follow with a "No DS match" badge (see section 5).
 
 ```javascript
-function createHotspot(name, x, y, width, height, parentFrame) {
-  const hotspot = figma.createFrame();
-  hotspot.name = `Hotspot: ${name}`;
-  hotspot.resize(width, height);
-  hotspot.x = x;
-  hotspot.y = y;
-  hotspot.fills = []; // fully transparent
-  hotspot.strokeWeight = 0;
-  hotspot.clipsContent = false;
-  parentFrame.appendChild(hotspot);
-  return hotspot;
+// ─── Button (no DS match) ─────────────────────────────────────────────────
+async function buildPrimitiveButton(label, variant = 'primary', parent, x, y) {
+  await figma.loadFontAsync({ family: "Inter", style: "Semi Bold" });
+
+  const bg = variant === 'primary'
+    ? { r: 0.09, g: 0.46, b: 0.96 }   // blue
+    : { r: 0.93, g: 0.93, b: 0.93 };  // light gray
+
+  const textColor = variant === 'primary'
+    ? { r: 1, g: 1, b: 1 }
+    : { r: 0.1, g: 0.1, b: 0.1 };
+
+  const btn = figma.createFrame();
+  btn.name = `Button [no DS match]: ${label}`;
+  btn.layoutMode = 'HORIZONTAL';
+  btn.primaryAxisSizingMode = 'AUTO';
+  btn.counterAxisSizingMode = 'AUTO';
+  btn.paddingTop = 10; btn.paddingBottom = 10;
+  btn.paddingLeft = 20; btn.paddingRight = 20;
+  btn.cornerRadius = 6;
+  btn.fills = [{ type: 'SOLID', color: bg }];
+
+  const text = figma.createText();
+  text.fontName = { family: "Inter", style: "Semi Bold" };
+  text.characters = label;
+  text.fontSize = 14;
+  text.fills = [{ type: 'SOLID', color: textColor }];
+  btn.appendChild(text);
+
+  btn.x = x; btn.y = y;
+  parent.appendChild(btn);
+  return btn;
 }
 
-// Example: mark the "Save" button region
-const saveHotspot = createHotspot("Save button", 892, 520, 120, 40, frame);
+// ─── Input field (no DS match) ────────────────────────────────────────────
+async function buildPrimitiveInput(placeholder, parent, x, y, width = 320) {
+  await figma.loadFontAsync({ family: "Inter", style: "Regular" });
 
-// Then annotate it
-saveHotspot.annotations = [
-  {
-    labelMarkdown: '**On click →** Validates form.\n\n' +
-      '- Valid: saving state (→ 1.3), then `POST /api/items`\n' +
-      '- Invalid: inline errors shown (→ 1.3b)\n\n' +
-      '*Debounced: 300ms*',
-    categoryId: interactionCat.id
-  }
-];
+  const input = figma.createFrame();
+  input.name = 'Input [no DS match]';
+  input.resize(width, 40);
+  input.cornerRadius = 4;
+  input.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+  input.strokes = [{ type: 'SOLID', color: { r: 0.8, g: 0.8, b: 0.8 } }];
+  input.strokeWeight = 1;
+  input.paddingLeft = 12; input.paddingRight = 12;
+  input.paddingTop = 10; input.paddingBottom = 10;
+  input.layoutMode = 'HORIZONTAL';
+  input.primaryAxisAlignItems = 'CENTER';
+
+  const text = figma.createText();
+  text.fontName = { family: "Inter", style: "Regular" };
+  text.characters = placeholder;
+  text.fontSize = 14;
+  text.fills = [{ type: 'SOLID', color: { r: 0.65, g: 0.65, b: 0.65 } }];
+  input.appendChild(text);
+
+  input.x = x; input.y = y;
+  parent.appendChild(input);
+  return input;
+}
+
+// ─── Card / container (no DS match) ──────────────────────────────────────
+function buildPrimitiveCard(name, width, parent, x, y) {
+  const card = figma.createFrame();
+  card.name = `${name} [no DS match]`;
+  card.resize(width, 1); // height auto via auto-layout
+  card.layoutMode = 'VERTICAL';
+  card.primaryAxisSizingMode = 'AUTO';
+  card.counterAxisSizingMode = 'FIXED';
+  card.paddingTop = 20; card.paddingBottom = 20;
+  card.paddingLeft = 20; card.paddingRight = 20;
+  card.itemSpacing = 12;
+  card.cornerRadius = 8;
+  card.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+  card.effects = [{
+    type: 'DROP_SHADOW',
+    color: { r: 0, g: 0, b: 0, a: 0.08 },
+    offset: { x: 0, y: 2 },
+    radius: 8,
+    spread: 0,
+    visible: true,
+    blendMode: 'NORMAL'
+  }];
+  card.x = x; card.y = y;
+  parent.appendChild(card);
+  return card;
+}
+
+// ─── Toast / banner (no DS match) ────────────────────────────────────────
+async function buildPrimitiveBanner(message, type = 'info', parent, x, y, width = 400) {
+  await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+
+  const colors = {
+    info:    { bg: { r: 0.92, g: 0.96, b: 1.00 }, text: { r: 0.1, g: 0.3, b: 0.7 } },
+    success: { bg: { r: 0.90, g: 0.98, b: 0.91 }, text: { r: 0.1, g: 0.5, b: 0.2 } },
+    warning: { bg: { r: 1.00, g: 0.97, b: 0.88 }, text: { r: 0.6, g: 0.4, b: 0.0 } },
+    error:   { bg: { r: 1.00, g: 0.93, b: 0.93 }, text: { r: 0.7, g: 0.1, b: 0.1 } },
+  };
+  const c = colors[type] ?? colors.info;
+
+  const banner = figma.createFrame();
+  banner.name = `Banner [no DS match]: ${type}`;
+  banner.resize(width, 1);
+  banner.layoutMode = 'HORIZONTAL';
+  banner.primaryAxisSizingMode = 'FIXED';
+  banner.counterAxisSizingMode = 'AUTO';
+  banner.paddingTop = 12; banner.paddingBottom = 12;
+  banner.paddingLeft = 16; banner.paddingRight = 16;
+  banner.cornerRadius = 6;
+  banner.fills = [{ type: 'SOLID', color: c.bg }];
+
+  const text = figma.createText();
+  text.fontName = { family: "Inter", style: "Regular" };
+  text.characters = message;
+  text.fontSize = 14;
+  text.fills = [{ type: 'SOLID', color: c.text }];
+  text.layoutGrow = 1;
+  text.textAutoResize = 'HEIGHT';
+  banner.appendChild(text);
+
+  banner.x = x; banner.y = y;
+  parent.appendChild(banner);
+  return banner;
+}
 ```
 
-**Finding hotspot coordinates:**
-- Read the prototype source to find component layout positions (CSS, inline styles)
-- Use approximate positions based on the layout — exact pixel-perfect placement matters
-  less than the annotation content
-- If unsure, ask the user to identify the element's approximate location
-
-**Hotspot sizing:**
-- Match the visible tap/click target of the element
-- For buttons: the full button bounding box
-- For form fields: the full input area
-- For navigation items: the full clickable row
-- Slightly larger than the visual element is fine — it won't affect the screenshot
+**General rule for primitives:** Match the visual intent (color, shape, size) of the prototype
+element as closely as you can from reading the source code. Exact pixel-perfection is not
+required — recognizability is.
 
 ---
 
-## 4. Native Figma Dev Mode annotations
+## 5. The "No DS match" badge
 
-Real Figma annotations appear in Dev Mode, support markdown, can be filtered by category, and
-stay attached to their node. Apply these to both frames (state-level) and hotspots (element-level).
+Add this to every primitive element so reviewers and designers can identify which components
+still need a DS counterpart.
 
-### Setting up annotation categories (once per session)
+```javascript
+async function addNoDsMatchBadge(node) {
+  await figma.loadFontAsync({ family: "Inter", style: "Semi Bold" });
+
+  const badge = figma.createFrame();
+  badge.name = "⚠ No DS match";
+  badge.layoutMode = 'HORIZONTAL';
+  badge.primaryAxisSizingMode = 'AUTO';
+  badge.counterAxisSizingMode = 'AUTO';
+  badge.paddingTop = 2; badge.paddingBottom = 2;
+  badge.paddingLeft = 6; badge.paddingRight = 6;
+  badge.cornerRadius = 3;
+  badge.fills = [{ type: 'SOLID', color: { r: 1, g: 0.6, b: 0.1 } }]; // orange
+
+  const label = figma.createText();
+  label.fontName = { family: "Inter", style: "Semi Bold" };
+  label.characters = "No DS match";
+  label.fontSize = 9;
+  label.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+  badge.appendChild(label);
+
+  // Position at top-left of the node
+  badge.x = node.x + 4;
+  badge.y = node.y + 4;
+
+  // Append to the same parent so it floats above the node
+  node.parent.appendChild(badge);
+  return badge;
+}
+```
+
+Call it immediately after creating any primitive approximation:
+```javascript
+const alertBanner = await buildPrimitiveBanner("Something went wrong", "error", frame, 24, 120);
+await addNoDsMatchBadge(alertBanner);
+```
+
+---
+
+## 6. Native Figma Dev Mode annotations
+
+Real Figma annotations that appear in Dev Mode, support markdown, can be filtered by category,
+and stay attached to their node. Do NOT create colored rectangles on the canvas as substitutes.
+
+### Setting up categories (once per session)
 
 ```javascript
 const interactionCat = await figma.annotations.addAnnotationCategoryAsync({
@@ -182,20 +323,19 @@ const a11yCat = await figma.annotations.addAnnotationCategoryAsync({
 });
 ```
 
-If categories were already created in this file, retrieve them instead:
+If categories were already created in this file:
 ```javascript
 const existing = await figma.annotations.getAnnotationCategoriesAsync();
 const interactionCat = existing.find(c => c.label === 'Interaction');
-// etc.
 ```
 
 Available colors: `'yellow'`, `'orange'`, `'red'`, `'pink'`, `'violet'`, `'blue'`, `'teal'`,
 `'green'`.
 
-### Annotating nodes
+### Adding annotations to nodes
 
 ```javascript
-// Simple annotation
+// Simple
 node.annotations = [{ label: 'Opens settings modal on click' }];
 
 // Rich markdown with category
@@ -209,7 +349,7 @@ node.annotations = [
   }
 ];
 
-// Multiple annotations on the same node
+// Multiple annotations (different concerns)
 node.annotations = [
   {
     labelMarkdown: '**Validation:** Required, min 3 chars, max 100 chars',
@@ -231,7 +371,6 @@ node.annotations = [
 ```
 
 ### Supported pinnable property types
-
 `'width'`, `'height'`, `'maxWidth'`, `'minWidth'`, `'maxHeight'`, `'minHeight'`,
 `'fills'`, `'strokes'`, `'effects'`, `'strokeWeight'`, `'cornerRadius'`,
 `'textStyleId'`, `'textAlignHorizontal'`, `'fontFamily'`, `'fontStyle'`, `'fontSize'`,
@@ -240,60 +379,47 @@ node.annotations = [
 
 ---
 
-## 5. Flow arrows and connectors
-
-Visual connectors showing the path between states. These sit between frames on the canvas,
-not inside a frame.
+## 7. Flow arrows and connectors
 
 ```javascript
-function createFlowArrow(fromFrame, toFrame, canvasParent, transitionLabel, catId) {
+function createFlowArrow(fromFrame, toFrame, transitionLabel, catId) {
   const arrow = figma.createLine();
   arrow.name = `Flow: ${fromFrame.name} → ${toFrame.name}`;
-  arrow.resize(toFrame.x - (fromFrame.x + fromFrame.width) - 20, 0);
+  const length = toFrame.x - (fromFrame.x + fromFrame.width) - 20;
+  arrow.resize(Math.max(length, 40), 0);
   arrow.x = fromFrame.x + fromFrame.width + 10;
   arrow.y = fromFrame.y + fromFrame.height / 2;
   arrow.strokes = [{ type: 'SOLID', color: { r: 0.25, g: 0.45, b: 0.95 } }];
   arrow.strokeWeight = 2;
   arrow.strokeCap = 'ARROW_EQUILATERAL';
 
-  if (transitionLabel) {
+  if (transitionLabel && catId) {
     arrow.annotations = [
       { labelMarkdown: transitionLabel, categoryId: catId }
     ];
   }
 
-  // Arrows live on the page, not inside frames
   figma.currentPage.appendChild(arrow);
   return arrow;
 }
-
-// Example
-createFlowArrow(frame12, frame13, figma.currentPage,
-  '**Transition:** On "Save" click with valid form', navigationCat.id);
 ```
 
-For branching flows (one state → two outcomes), create two arrows with angled paths
-and labels explaining the branch condition.
+For branching flows (one frame → two outcomes), create two arrows with labels explaining the
+branch condition.
 
 ---
 
-## 6. Section containers
-
-Group related flow frames in a Figma section:
+## 8. Section containers
 
 ```javascript
+// Preferred: Figma native sections
 const section = figma.createSection();
 section.name = "Flow 1: Create New Item";
+section.appendChild(frame1);
+section.appendChild(frame2);
 // Sections auto-resize to fit children
-section.appendChild(frame11);
-section.appendChild(frame12);
-section.appendChild(frame13a);
-section.appendChild(frame13b);
-```
 
-If sections cause issues, use a large transparent frame instead:
-
-```javascript
+// Fallback: transparent large frame
 const sectionFrame = figma.createFrame();
 sectionFrame.name = "Flow 1: Create New Item";
 sectionFrame.resize(8000, 1200);
@@ -303,59 +429,13 @@ sectionFrame.clipsContent = false;
 
 ---
 
-## 7. State badge overlays
-
-Small labeled badges placed over a frame to indicate its state type at a glance:
+## 9. Positioning and spacing
 
 ```javascript
-async function createStateBadge(text, color, parentFrame, x = 8, y = 8) {
-  const badge = figma.createFrame();
-  badge.name = `Badge: ${text}`;
-  badge.layoutMode = 'HORIZONTAL';
-  badge.primaryAxisSizingMode = 'AUTO';
-  badge.counterAxisSizingMode = 'AUTO';
-  badge.paddingTop = 3;
-  badge.paddingBottom = 3;
-  badge.paddingLeft = 8;
-  badge.paddingRight = 8;
-  badge.cornerRadius = 4;
-  badge.fills = [{ type: 'SOLID', color }];
+const FRAME_GAP = 200;         // horizontal gap between sequential state frames
+const BRANCH_GAP = 100;        // vertical gap between branching frames (e.g. 1.3a / 1.3b)
+const FLOW_SECTION_GAP = 400;  // vertical gap between flow sections
 
-  await figma.loadFontAsync({ family: "Inter", style: "Semi Bold" });
-  const label = figma.createText();
-  label.fontName = { family: "Inter", style: "Semi Bold" };
-  label.characters = text;
-  label.fontSize = 9;
-  label.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
-  badge.appendChild(label);
-
-  badge.x = x;
-  badge.y = y;
-  parentFrame.appendChild(badge);
-  return badge;
-}
-
-// Common badges
-createStateBadge("Loading",        { r: 0.25, g: 0.45, b: 0.95 }, frame); // blue
-createStateBadge("Error state",    { r: 0.85, g: 0.20, b: 0.20 }, frame); // red
-createStateBadge("Empty state",    { r: 0.55, g: 0.36, b: 0.96 }, frame); // purple
-createStateBadge("Success",        { r: 0.13, g: 0.69, b: 0.30 }, frame); // green
-createStateBadge("Needs screenshot",{ r: 0.90, g: 0.50, b: 0.10 }, frame); // orange
-```
-
-Use "Needs screenshot" when you've created the frame but are still waiting for the user to
-provide the screenshot for that state.
-
----
-
-## 8. Positioning and spacing
-
-```javascript
-const FRAME_GAP = 200;        // horizontal gap between sequential state frames
-const BRANCH_V_GAP = 100;     // vertical gap between branching frames (e.g. 1.3a and 1.3b)
-const FLOW_SECTION_GAP = 400; // vertical gap between flow sections
-
-// Layout a sequence of frames left-to-right
 function layoutSequence(frames, startX = 100, startY = 100) {
   let x = startX;
   for (const frame of frames) {
@@ -365,18 +445,17 @@ function layoutSequence(frames, startX = 100, startY = 100) {
   }
 }
 
-// Layout a branching pair (success above, error below)
-function layoutBranch(successFrame, errorFrame, afterX, branchY) {
+function layoutBranch(successFrame, errorFrame, afterX, baseY) {
   successFrame.x = afterX;
-  successFrame.y = branchY;
+  successFrame.y = baseY;
   errorFrame.x = afterX;
-  errorFrame.y = branchY + successFrame.height + BRANCH_V_GAP;
+  errorFrame.y = baseY + successFrame.height + BRANCH_GAP;
 }
 ```
 
 ---
 
-## 9. Annotation category reference
+## 10. Annotation category reference
 
 | Category | Color | Use for |
 |---|---|---|
@@ -389,25 +468,4 @@ function layoutBranch(successFrame, errorFrame, afterX, branchY) {
 | Data / API | `'green'` | Data sources, endpoints, caching, loading behavior |
 | Accessibility | `'yellow'` | Keyboard nav, screen reader text, ARIA, focus order |
 
----
-
-## 10. Font loading (for labels and badges)
-
-Only needed if you're creating text nodes for badges or overview labels — not for the
-screenshot content itself.
-
-```javascript
-// Load all weights you'll use upfront
-await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-await figma.loadFontAsync({ family: "Inter", style: "Semi Bold" });
-await figma.loadFontAsync({ family: "Inter", style: "Bold" });
-
-// Note: "Semi Bold" has a space (not "SemiBold"). Same for "Extra Bold".
-
-const text = figma.createText();
-text.fontName = { family: "Inter", style: "Regular" };
-text.characters = "Your label here";
-text.fontSize = 14;
-text.fills = [{ type: 'SOLID', color: { r: 0.13, g: 0.13, b: 0.13 } }];
-text.textAutoResize = 'WIDTH_AND_HEIGHT';
-```
+Reviewers can filter by any category in Dev Mode to focus on what's relevant to their role.
