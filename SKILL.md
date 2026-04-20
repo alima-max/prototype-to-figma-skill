@@ -757,6 +757,8 @@ where they are.
 summary. This turns unmatched components from a silent failure into actionable signal for the
 design team.
 
+**Before validating a completed state**: be sure that all elements and frames are properly aligned and there are no overlapping elements, sections, or frames. Make one more roundtrip if you need to.
+
 ---
 
 ## Edge cases and tips
