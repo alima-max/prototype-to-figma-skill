@@ -69,6 +69,44 @@ container.itemSpacing = 12;
 container.fills = [{ type: 'SOLID', color: { r: 0.97, g: 0.97, b: 0.97 } }];
 ```
 
+### Scrollable frames
+
+When a prototype state scrolls vertically, the frame must be tall enough to show all content —
+never clip at the viewport height. Set `overflowDirection` so Figma knows it scrolls, and add
+a fold marker line so reviewers can see where the visible viewport ends.
+
+```javascript
+const VIEWPORT_HEIGHT = 900; // or 844 for mobile
+const fullContentHeight = 1800; // estimated from prototype — how tall the full page is
+
+const frame = figma.createFrame();
+frame.name = "2.1 — Settings page (scrollable)";
+frame.resize(1440, fullContentHeight); // full content height, not viewport height
+frame.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
+frame.overflowDirection = 'VERTICAL'; // marks this as a scrolling frame in Figma
+
+// ... build all content into the frame at their natural positions ...
+
+// Fold marker — dashed line at the viewport height showing where the screen cuts off
+const foldLine = figma.createLine();
+foldLine.name = "— viewport fold —";
+foldLine.resize(1440, 0);
+foldLine.x = 0;
+foldLine.y = VIEWPORT_HEIGHT;
+foldLine.strokes = [{ type: 'SOLID', color: { r: 0.6, g: 0.2, b: 0.9 } }]; // purple
+foldLine.strokeWeight = 1.5;
+foldLine.dashPattern = [8, 4];
+frame.appendChild(foldLine);
+
+// Annotate the fold line so reviewers understand it
+await annotateNode(
+  foldLine,
+  `**Viewport fold** — content below this line requires scrolling. ` +
+  `Visible area: ${1440}×${VIEWPORT_HEIGHT}px. Full page: ${1440}×${fullContentHeight}px.`,
+  stateCat?.id
+);
+```
+
 ---
 
 ## 3. Importing DS components (matched elements)
