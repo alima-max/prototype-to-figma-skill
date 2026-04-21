@@ -338,25 +338,34 @@ Work only with the flows confirmed in Phase 1b. During component mapping, only m
 that appear in selected flows — components used exclusively in omitted flows can be skipped.
 
 For every component in the Phase 1a inventory (for selected flows), determine whether it has a DS match.
-Every component must end up in one of two columns: **matched** or **build from primitives**.
-Neither column can be empty just because you couldn't find something.
+**Default to DS — primitives are a last resort, not a first option.** Exhaust all search
+strategies before marking something as "build from primitives".
 
 **Strategy A: Design system search (if Inspect tools available)**
 
 ```
 For each component in your inventory:
   1. search_design_system(fileKey, query="Button", includeComponents=true)
-  2. If found → note the component key for importComponentByKeyAsync
-  3. If not found under that name → try alternate names (Alert/Banner/Notification/Toast, etc.)
-  4. If still not found → column: "build from primitives"
+  2. If found → note the component key and check variant props with get_context_for_code_connect
+  3. If not found → try alternate names: Alert/Banner/Notification/Toast, Dropdown/Select/Menu,
+     Tag/Chip/Badge, Card/Panel/Tile, Avatar/Profile/User, etc.
+  4. If not found by name → try searching by visual category: "input", "navigation", "feedback"
+  5. If still not found → try searching for a parent component (e.g. if <Card.Header> has no
+     match, check if "Card" as a whole does and use that with the header as a child)
+  6. Only after all of the above fail → column: "build from primitives", note what you searched
 ```
 
-Also search for design tokens to use on primitive elements:
-- Color tokens: `search_design_system(fileKey, query="primary", includeVariables=true, includeComponents=false)`
-- Spacing tokens: `search_design_system(fileKey, query="spacing", includeVariables=true, includeComponents=false)`
+**Apply DS variables to every element — not just primitives**
 
-When you find relevant variables, call `Figma:get_variable_defs(fileKey, nodeId)` to get their
-exact hex/pixel values. Apply these to primitive elements to keep them visually on-system.
+Look up and apply DS tokens wherever possible, regardless of whether the element is a DS
+component or a primitive:
+- Color tokens: `search_design_system(fileKey, query="primary", includeVariables=true, includeComponents=false)`
+- Spacing: `search_design_system(fileKey, query="spacing", includeVariables=true, includeComponents=false)`
+- Typography: `search_design_system(fileKey, query="body", includeStyles=true, includeComponents=false)`
+
+Call `Figma:get_variable_defs(fileKey, nodeId)` to get exact hex/pixel values, then apply them
+to fills, strokes, padding, itemSpacing, and textStyleId. An element built from primitives but
+using DS color and spacing tokens is far better than one using hardcoded values.
 
 **Strategy B: Code Connect reverse lookup (if Code Connect tools available)**
 
@@ -371,14 +380,15 @@ exact hex/pixel values. Apply these to primitive elements to keep them visually 
 
 **Build the component mapping table:**
 
-| Code component | Figma DS match | Key | Code Connect | Build approach |
+| Code component | Figma DS match | Key | Build approach | Drift notes |
 |---|---|---|---|---|
-| `<Button variant="primary">` | Button | abc123 | ✅ `src/ui/Button.tsx` | Import + setProperties |
-| `<DataTable>` | Table | def456 | ✅ `src/ui/DataTable.tsx` | Import + setProperties |
-| `<CustomWidget>` | — | — | — | **Primitives** |
-| `<AlertBanner>` | — | — | — | **Primitives** |
+| `<Button variant="primary">` | Button | abc123 | Import + setProperties | ✅ Clean match |
+| `<DataTable sortable>` | Table | def456 | Import + setProperties | ⚠️ No `sortable` variant in Figma — annotate |
+| `<CustomWidget>` | — | — | **Primitives** | Searched: Widget, Card, Panel — no match |
+| `<AlertBanner>` | — | — | **Primitives** | Searched: Alert, Banner, Toast, Notification — no match |
 
-Every row must have a build approach. No row can be blank.
+Every row must have a build approach and drift notes. No row can be blank.
+Any row with a ⚠️ drift note must get a DS Drift annotation in Phase 4.
 
 ---
 
@@ -447,6 +457,16 @@ For each element, choose the correct approach based on the mapping table:
 
 ---
 
+**DS Drift annotations — required for every mismatch**
+
+After placing each element, check its drift notes from the Phase 2 mapping table. Any element
+with a ⚠️ drift note must get a DS Drift annotation explaining the gap:
+
+- **DS component with missing props:** annotate what the code behavior is that Figma can't represent (e.g. a variant that doesn't exist, an interactive state the DS component lacks)
+- **Primitive (no DS match):** annotate that no DS component was found, what was searched, and that this is a DS gap for the design team to address
+
+Use `annotateNode(node, text, dsDriftCat?.id)` from `figma-patterns.md` Section 11.
+
 **Completeness check after each frame:**
 
 Before moving to the next frame, verify that every element from the Phase 2 inventory that
@@ -476,7 +496,7 @@ where categories already exist in the file (which causes `addAnnotationCategoryA
 and returns `null` if the native API is fully unavailable — in which case `annotateNode` will
 automatically fall back to canvas text overlays.
 
-See `figma-patterns.md` Section 11 for the full category setup — all eight categories with names and colors.
+See `figma-patterns.md` Section 11 for the full category setup — all eight interaction categories plus the DS Drift category.
 
 **Step 4b: Annotate every interactive element**
 
