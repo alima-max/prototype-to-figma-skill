@@ -78,7 +78,7 @@ annotation text directly in the frame or layer name. Something is always better 
 - One annotation per form field (validation rules)
 - One annotation per state frame (what caused this state, how the user leaves it)
 
-The annotation density should be HIGH. When in doubt, annotate more.
+The annotation density should be HIGH. When in doubt, annotate more. Always use `node.annotations = [...]` on actual interactive elements — not colored rectangles on the canvas.
 
 ---
 
