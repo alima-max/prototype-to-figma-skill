@@ -33,9 +33,9 @@ The user has built (or is working on) a prototype in Claude Code and wants to:
 
 ---
 
-## Two non-negotiable rules
+## Three non-negotiable rules
 
-These rules exist to prevent the two bugs most commonly reported by users of this skill:
+These rules exist to prevent the bugs most commonly reported by users of this skill:
 
 ### Rule 1: Never create new Figma components
 
@@ -57,6 +57,28 @@ component instance (if a match was found) or as a primitive approximation (if no
 
 Do not skip an element because you couldn't find its DS match. Skipping elements is what causes
 reviewers to see a Figma file that's missing whole sections of the prototype UI.
+
+### Rule 3: Every interactive element must be annotated — on every platform
+
+**Annotations are the primary deliverable of this skill.** A frame with no annotations is just a
+screenshot of a UI, not a design spec. Do not skip the annotation phase under any circumstances,
+regardless of which AI editor or client you are running on.
+
+**This rule applies on every platform** — Claude Code, Codex, Cursor, VS Code, Copilot CLI,
+Augment Code, and all others. Annotations must be present in the output.
+
+Use the defensive helpers in `figma-patterns.md` Section 11 — they handle API errors (e.g.,
+categories that already exist) and fall back to canvas text overlays if the native
+`figma.annotations` API is unavailable. **Never silently drop annotations because of an API
+error.** If native annotations fail, use the text fallback. If text placement fails, embed the
+annotation text directly in the frame or layer name. Something is always better than nothing.
+
+**Every frame must have at minimum:**
+- One annotation per clickable/interactive element (trigger + result)
+- One annotation per form field (validation rules)
+- One annotation per state frame (what caused this state, how the user leaves it)
+
+The annotation density should be HIGH. When in doubt, annotate more. Always use `node.annotations = [...]` on actual interactive elements — not colored rectangles on the canvas.
 
 ---
 
@@ -404,63 +426,11 @@ For each element, choose the correct approach based on the mapping table:
 
 ---
 
-**When the component HAS a DS match:**
-
-```javascript
-// Import the component from the linked library
-const component = await figma.importComponentByKeyAsync("abc123");
-const instance = component.createInstance();
-
-// Configure the instance to match the prototype state
-// Use exact property names from get_context_for_code_connect
-instance.setProperties({ "Variant": "Primary", "Size": "md", "State": "Default" });
-
-instance.x = 24;
-instance.y = 16;
-frame.appendChild(instance);
-```
+**When the component HAS a DS match:** See `figma-patterns.md` Section 3 for the `importComponentByKeyAsync` + `setProperties` pattern.
 
 ---
 
-**When the component does NOT have a DS match — build from primitives:**
-
-```javascript
-// Build a visual approximation from primitives.
-// NEVER call figma.createComponent() or figma.createComponentSet().
-// Use figma.createFrame() + auto-layout to approximate the component.
-
-// Example: approximating an <AlertBanner type="error"> with no DS match
-const alertFrame = figma.createFrame();
-alertFrame.name = "AlertBanner [no DS match]";
-alertFrame.layoutMode = 'HORIZONTAL';
-alertFrame.primaryAxisSizingMode = 'FIXED';
-alertFrame.counterAxisSizingMode = 'AUTO';
-alertFrame.resize(600, 1); // width fixed, height auto
-alertFrame.paddingTop = 12;
-alertFrame.paddingBottom = 12;
-alertFrame.paddingLeft = 16;
-alertFrame.paddingRight = 16;
-alertFrame.itemSpacing = 12;
-alertFrame.cornerRadius = 6;
-// Apply DS token if found, otherwise use a reasonable fallback
-alertFrame.fills = [{ type: 'SOLID', color: { r: 1, g: 0.94, b: 0.94 } }]; // light red
-
-await figma.loadFontAsync({ family: "Inter", style: "Regular" });
-const alertText = figma.createText();
-alertText.fontName = { family: "Inter", style: "Regular" };
-alertText.characters = "Something went wrong. Please try again.";
-alertText.fontSize = 14;
-alertText.fills = [{ type: 'SOLID', color: { r: 0.6, g: 0.1, b: 0.1 } }];
-alertText.textAutoResize = 'WIDTH_AND_HEIGHT';
-alertFrame.appendChild(alertText);
-
-frame.appendChild(alertFrame);
-
-// Add a "No DS match" badge so reviewers can identify this element
-await addNoDsMatchBadge(alertFrame);
-```
-
-See `figma-patterns.md` for the `addNoDsMatchBadge` helper and more primitive patterns.
+**When the component does NOT have a DS match — build from primitives:** See `figma-patterns.md` Section 4 for primitive construction helpers and `addNoDsMatchBadge`.
 
 ---
 
@@ -472,10 +442,13 @@ either as DS instances or primitives — before proceeding.
 
 ---
 
-**4. Add interaction annotations using Figma's native annotation API**
+**4. Add interaction annotations — required on every platform**
 
 This is what makes the output useful for async review. Without this, reviewers just see static
 screens with no indication of what's interactive or how states connect.
+
+**This step is non-negotiable (Rule 3).** Do not skip it. Do not abbreviate it. It applies
+regardless of which AI editor or client is executing this skill.
 
 Figma's annotation system surfaces directly in Dev Mode — not colored rectangles on the canvas.
 Annotations attach to specific layers, appear in the Dev Mode sidebar, support markdown, and
@@ -483,75 +456,19 @@ can be filtered by category.
 
 **Every interactive element in every frame MUST get an annotation.**
 
-**Step 4a: Set up annotation categories**
+**Step 4a: Set up annotation categories using the defensive helper**
 
-```javascript
-const interactionCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Interaction', color: 'blue'
-});
-const navigationCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Navigation', color: 'violet'
-});
-const stateCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'State Change', color: 'teal'
-});
-const validationCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Validation', color: 'orange'
-});
-const errorCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Error Handling', color: 'red'
-});
-const edgeCaseCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Edge Case', color: 'pink'
-});
-const dataCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Data / API', color: 'green'
-});
-const a11yCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Accessibility', color: 'yellow'
-});
-```
+Use `getOrCreateAnnotationCategory` from `figma-patterns.md` Section 11. This handles the case
+where categories already exist in the file (which causes `addAnnotationCategoryAsync` to throw),
+and returns `null` if the native API is fully unavailable — in which case `annotateNode` will
+automatically fall back to canvas text overlays.
 
-Available colors: `'yellow'`, `'orange'`, `'red'`, `'pink'`, `'violet'`, `'blue'`, `'teal'`,
-`'green'`.
+See `figma-patterns.md` Section 11 for the full category setup — all eight categories with names and colors.
 
 **Step 4b: Annotate every interactive element**
 
-```javascript
-// Annotate a button
-saveButton.annotations = [
-  {
-    labelMarkdown: '**On click →** Validates all form fields.\n\n' +
-      '- If valid: shows loading spinner (→ Frame 1.3), then `POST /api/items`\n' +
-      '- If invalid: highlights error fields, shows inline errors (→ Frame 1.4b)\n\n' +
-      '*Debounced: 300ms cooldown after last click*',
-    categoryId: interactionCat.id
-  }
-];
-
-// Annotate a form field
-emailField.annotations = [
-  {
-    labelMarkdown: '**Validation rules:**\n- Required\n- Must match email regex\n' +
-      '- Uniqueness check via `GET /api/users/check-email`\n- Error shown on blur',
-    categoryId: validationCat.id
-  },
-  {
-    labelMarkdown: '**Keyboard:** Tab to next field. Enter submits form.',
-    categoryId: a11yCat.id
-  }
-];
-
-// Annotate a loading state frame
-loadingFrame.annotations = [
-  {
-    labelMarkdown: '**State: Loading**\n\nTriggered after successful validation.\n' +
-      'Spinner replaces button text. All fields disabled.\n\n' +
-      '**Timeout:** 10s → error toast, form re-enabled (→ Frame 1.4b)',
-    categoryId: stateCat.id
-  }
-];
-```
+Use `annotateNode` from `figma-patterns.md` Section 11 — it wraps native annotations with a
+fallback so they always appear regardless of platform. See Section 11 for usage examples.
 
 **Step 4c: Annotation checklist (run for every frame)**
 
@@ -569,24 +486,7 @@ loadingFrame.annotations = [
 The annotation density should be HIGH — a frame with 5 interactive elements should have
 at minimum 5 annotations.
 
-For flow connectors between frames:
-
-```javascript
-const arrow = figma.createLine();
-arrow.name = "Flow: 1.1 → 1.2";
-arrow.resize(200, 0);
-arrow.x = frame1.x + frame1.width + 10;
-arrow.y = frame1.y + frame1.height / 2;
-arrow.strokes = [{ type: 'SOLID', color: { r: 0.2, g: 0.4, b: 1 } }];
-arrow.strokeWeight = 2;
-arrow.strokeCap = 'ARROW_EQUILATERAL';
-arrow.annotations = [
-  {
-    labelMarkdown: '**Transition:** On successful save (HTTP 200)',
-    categoryId: navigationCat.id
-  }
-];
-```
+For flow connectors between frames, see `figma-patterns.md` Section 7 for the arrow pattern — remember to call `annotateNode` on the arrow to label the transition trigger.
 
 ---
 
@@ -651,99 +551,15 @@ a new file was created in Phase 0 (the user has no other way to find it).
 
 ## Prototype Spec Document — output for Inspect-only clients
 
-When Write tools are unavailable, produce a structured markdown document.
-
-```markdown
-# [Feature Name] — Prototype Spec
-
-**Generated from:** [prototype file path or description]
-**Target Figma file:** [URL if provided, or "not specified"]
-**Date:** [today]
-
----
-
-## Overview
-
-[2–3 sentence description of what the prototype demonstrates]
-
-**Open questions for reviewers:**
-- [List ambiguous behaviors or design decisions needing input]
-
----
-
-## Flows
-
-### Flow 1: [Flow Name]
-
-**Goal:** [What the user is trying to accomplish]
-**Entry point:** [What triggers this flow]
-
-#### States
-
-**1.1 — [State name]**
-- **Frame size:** 1440×900 (desktop) / 390×844 (mobile)
-- **Layout:** [Describe the overall layout]
-- **Components:**
-  - [Component name] (`<Button variant="primary">`) → DS match: Button/Primary [verified] or [unverified]
-  - [Component name] → No DS match: build from primitives
-
-- **Interactions:**
-  | Element | Trigger | Result | Notes |
-  |---|---|---|---|
-  | Save button | Click | Validates form → loading (→ 1.2) | Debounced 300ms |
-
-- **Annotations:**
-  - **Interaction:** [click targets and results]
-  - **Validation:** [form rules]
-  - **Data / API:** [endpoints, data sources]
-  - **Error Handling:** [errors, recovery]
-  - **Edge Cases:** [non-obvious behavior]
-  - **Accessibility:** [tab order, keyboard shortcuts]
-
----
-
-## Component inventory
-
-| Code component | Props | DS match | Confidence | Build approach |
-|---|---|---|---|---|
-| `<Button>` | variant="primary", size="md" | Button/Primary | High | Import + setProperties |
-| `<DataTable>` | columns, rows | Table | Medium | Import + setProperties |
-| `<CustomWidget>` | (custom) | None | — | Primitives |
-
----
-
-## Figma build guide
-
-*For whoever builds this in Figma:*
-
-**Page:** "[Feature Name] — Prototype Flows"
-**Frame sizes:** 1440×900 desktop / 390×844 mobile
-**Layout:** Left-to-right per flow, branches stacked vertically, 200px gaps
-
-**Components to import from DS:** [list from inventory above]
-**Components to build from primitives:** [list from inventory above]
-
-**Important:** For components without DS matches, build from primitives (frames, rectangles,
-text, auto-layout). Do NOT call `figma.createComponent()`. Do NOT skip the element.
-```
+When Write tools are unavailable, produce a structured markdown document using the template in
+`figma-patterns.md` Section 12.
 
 ---
 
 ## Important principles
 
-**Never create new Figma components.** `figma.createComponent()` pollutes the design system.
-Unmatched elements always get primitive approximations instead.
-
-**Never skip a prototype element.** Every element in the component inventory must appear in
-the Figma output. Primitives are always an acceptable fallback.
-
 **Optimize for reviewer comprehension, not designer precision.** Clear labels, obvious flow
 direction, and thorough annotations matter more than pixel-perfect spacing.
-
-**Annotate generously — this is the core deliverable.** Every native Figma annotation you add
-saves a Slack thread. A frame without annotations is just a screenshot of a UI. When in doubt,
-annotate. Use `node.annotations = [...]` on actual interactive elements, not colored rectangles
-on the canvas.
 
 **Respect the design system.** Use DS component instances for matched components — this means
 reviewers see familiar patterns and can focus on the new interactions rather than decoding the
@@ -757,7 +573,7 @@ where they are.
 summary. This turns unmatched components from a silent failure into actionable signal for the
 design team.
 
-**Before validating a completed state**: be sure that all elements and frames are properly aligned and there are no overlapping elements, sections, or frames. Make one more roundtrip if you need to.
+**Before validating a completed state**: verify all elements and frames are properly aligned with no overlaps. Make one more roundtrip if needed.
 
 ---
 

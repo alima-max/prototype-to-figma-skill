@@ -18,6 +18,8 @@ Common patterns for building prototype-to-Figma output. Read this before your fi
 8. Section containers
 9. Positioning and spacing
 10. Annotation category reference
+11. Defensive annotation helpers (platform-safe)
+12. Prototype Spec Document template (Inspect-only clients)
 
 ---
 
@@ -294,6 +296,11 @@ await addNoDsMatchBadge(alertBanner);
 Real Figma annotations that appear in Dev Mode, support markdown, can be filtered by category,
 and stay attached to their node. Do NOT create colored rectangles on the canvas as substitutes.
 
+> **Use the defensive helpers in Section 11** instead of calling `figma.annotations` directly.
+> Direct calls to `addAnnotationCategoryAsync` will throw if the category already exists, and
+> direct `node.annotations = [...]` assignment will fail silently on some platforms. The Section
+> 11 helpers handle both failure modes with automatic fallbacks.
+
 ### Setting up categories (once per session)
 
 ```javascript
@@ -469,3 +476,155 @@ function layoutBranch(successFrame, errorFrame, afterX, baseY) {
 | Accessibility | `'yellow'` | Keyboard nav, screen reader text, ARIA, focus order |
 
 Reviewers can filter by any category in Dev Mode to focus on what's relevant to their role.
+
+---
+
+## 11. Defensive annotation helpers (platform-safe)
+
+Use these helpers instead of calling `figma.annotations` directly. They handle two failure
+modes that cause annotations to silently disappear on some platforms:
+
+1. **Categories already exist** — `addAnnotationCategoryAsync` throws if a category with that
+   label was already created in this file. The helper checks first and returns the existing one.
+2. **Native API unavailable** — If `figma.annotations` is undefined or throws entirely,
+   `annotateNode` falls back to a canvas text overlay so annotation content is never lost.
+
+```javascript
+// ─── Get or create an annotation category safely ─────────────────────────
+async function getOrCreateAnnotationCategory(label, color) {
+  try {
+    const existing = await figma.annotations.getAnnotationCategoriesAsync();
+    const found = existing.find(c => c.label === label);
+    if (found) return found;
+    return await figma.annotations.addAnnotationCategoryAsync({ label, color });
+  } catch (e) {
+    return null; // annotateNode will use text fallback when categoryId is null
+  }
+}
+
+// ─── Annotate a node safely, with text-overlay fallback ──────────────────
+async function annotateNode(node, markdownText, categoryId) {
+  try {
+    const entry = categoryId
+      ? { labelMarkdown: markdownText, categoryId }
+      : { label: markdownText };
+    node.annotations = [...(node.annotations || []), entry];
+  } catch (e) {
+    // Native annotation API failed — place a visible text label near the node instead.
+    // This ensures annotation content always appears in the output.
+    try {
+      await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+      const plain = markdownText.replace(/\*\*/g, '').replace(/\n/g, ' | ');
+      const label = figma.createText();
+      label.fontName = { family: "Inter", style: "Regular" };
+      label.characters = `[Annotation] ${plain}`;
+      label.fontSize = 11;
+      label.fills = [{ type: 'SOLID', color: { r: 0.18, g: 0.36, b: 0.94 } }];
+      label.x = node.absoluteBoundingBox?.x ?? node.x;
+      label.y = (node.absoluteBoundingBox?.y ?? node.y) - 20;
+      figma.currentPage.appendChild(label);
+    } catch (_) {
+      // Last resort: encode the annotation in the node's name so it's visible in the layer panel
+      node.name = `${node.name} [Note: ${markdownText.substring(0, 80)}]`;
+    }
+  }
+}
+```
+
+**Usage:**
+
+```javascript
+// Set up categories once before building any frame
+const interactionCat = await getOrCreateAnnotationCategory('Interaction', 'blue');
+const validationCat  = await getOrCreateAnnotationCategory('Validation',  'orange');
+// ... etc
+
+// Annotate each interactive element using the helper
+await annotateNode(saveButton, '**On click →** Submits form via POST /api/items', interactionCat?.id);
+await annotateNode(emailField, '**Validation:** Required, must be valid email', validationCat?.id);
+```
+
+> **Note:** Always use `categoryId?.id` (optional chaining) so a `null` category (returned
+> when the API is unavailable) degrades gracefully to an uncategorized annotation rather than
+> throwing.
+
+---
+
+## 12. Prototype Spec Document template (Inspect-only clients)
+
+Use this when Write tools (`use_figma`) are unavailable. Produce a structured markdown document
+the team can read and comment on directly.
+
+```markdown
+# [Feature Name] — Prototype Spec
+
+**Generated from:** [prototype file path or description]
+**Target Figma file:** [URL if provided, or "not specified"]
+**Date:** [today]
+
+---
+
+## Overview
+
+[2–3 sentence description of what the prototype demonstrates]
+
+**Open questions for reviewers:**
+- [List ambiguous behaviors or design decisions needing input]
+
+---
+
+## Flows
+
+### Flow 1: [Flow Name]
+
+**Goal:** [What the user is trying to accomplish]
+**Entry point:** [What triggers this flow]
+
+#### States
+
+**1.1 — [State name]**
+- **Frame size:** 1440×900 (desktop) / 390×844 (mobile)
+- **Layout:** [Describe the overall layout]
+- **Components:**
+  - [Component name] (`<Button variant="primary">`) → DS match: Button/Primary [verified] or [unverified]
+  - [Component name] → No DS match: build from primitives
+
+- **Interactions:**
+  | Element | Trigger | Result | Notes |
+  |---|---|---|---|
+  | Save button | Click | Validates form → loading (→ 1.2) | Debounced 300ms |
+
+- **Annotations:**
+  - **Interaction:** [click targets and results]
+  - **Validation:** [form rules]
+  - **Data / API:** [endpoints, data sources]
+  - **Error Handling:** [errors, recovery]
+  - **Edge Cases:** [non-obvious behavior]
+  - **Accessibility:** [tab order, keyboard shortcuts]
+
+---
+
+## Component inventory
+
+| Code component | Props | DS match | Confidence | Build approach |
+|---|---|---|---|---|
+| `<Button>` | variant="primary", size="md" | Button/Primary | High | Import + setProperties |
+| `<DataTable>` | columns, rows | Table | Medium | Import + setProperties |
+| `<CustomWidget>` | (custom) | None | — | Primitives |
+
+---
+
+## Figma build guide
+
+*For whoever builds this in Figma:*
+
+**Page:** "[Feature Name] — Prototype Flows"
+**Frame sizes:** 1440×900 desktop / 390×844 mobile
+**Layout:** Left-to-right per flow, branches stacked vertically, 200px gaps
+
+**Components to import from DS:** [list from inventory above]
+**Components to build from primitives:** [list from inventory above]
+
+**Important:** For components without DS matches, build from primitives (frames, rectangles,
+text, auto-layout). Do NOT call `figma.createComponent()`. Do NOT skip the element.
+```
