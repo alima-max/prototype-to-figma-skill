@@ -18,7 +18,7 @@ Common patterns for building prototype-to-Figma output. Read this before your fi
 8. Section containers
 9. Positioning and spacing
 10. Annotation category reference
-11. Defensive annotation helpers (platform-safe)
+11. Defensive annotation helpers (platform-safe, includes DS Drift category)
 12. Prototype Spec Document template (Inspect-only clients)
 
 ---
@@ -512,6 +512,7 @@ function layoutBranch(successFrame, errorFrame, afterX, baseY) {
 | Edge Case | `'pink'` | Non-obvious behaviors, race conditions, timing quirks |
 | Data / API | `'green'` | Data sources, endpoints, caching, loading behavior |
 | Accessibility | `'yellow'` | Keyboard nav, screen reader text, ARIA, focus order |
+| DS Drift | `'red'` | Gap between code behavior and Figma DS component/variable |
 
 Reviewers can filter by any category in Dev Mode to focus on what's relevant to their role.
 
@@ -569,17 +570,40 @@ async function annotateNode(node, markdownText, categoryId) {
 }
 ```
 
-**Usage:**
+**Usage — full category setup:**
 
 ```javascript
-// Set up categories once before building any frame
-const interactionCat = await getOrCreateAnnotationCategory('Interaction', 'blue');
-const validationCat  = await getOrCreateAnnotationCategory('Validation',  'orange');
-// ... etc
+// Set up all categories once before building any frame
+const interactionCat = await getOrCreateAnnotationCategory('Interaction',    'blue');
+const navigationCat  = await getOrCreateAnnotationCategory('Navigation',     'violet');
+const stateCat       = await getOrCreateAnnotationCategory('State Change',   'teal');
+const validationCat  = await getOrCreateAnnotationCategory('Validation',     'orange');
+const errorCat       = await getOrCreateAnnotationCategory('Error Handling', 'red');
+const edgeCaseCat    = await getOrCreateAnnotationCategory('Edge Case',      'pink');
+const dataCat        = await getOrCreateAnnotationCategory('Data / API',     'green');
+const a11yCat        = await getOrCreateAnnotationCategory('Accessibility',  'yellow');
+const dsDriftCat     = await getOrCreateAnnotationCategory('DS Drift',       'red');
 
-// Annotate each interactive element using the helper
+// Interaction annotation
 await annotateNode(saveButton, '**On click →** Submits form via POST /api/items', interactionCat?.id);
-await annotateNode(emailField, '**Validation:** Required, must be valid email', validationCat?.id);
+
+// DS Drift annotation — DS component with a missing variant
+await annotateNode(
+  tableInstance,
+  '**DS Drift:** Code uses `sortable` prop — column headers are clickable to sort ' +
+  '(ascending → descending → default). The Figma DS Table component has no sortable ' +
+  'variant. Designers: this state needs a DS component update.',
+  dsDriftCat?.id
+);
+
+// DS Drift annotation — no DS match, built from primitives
+await annotateNode(
+  customWidgetFrame,
+  '**DS Drift:** No DS match found for `<CustomWidget>`. ' +
+  'Searched: Widget, Card, Panel, Tile — none matched. ' +
+  'Built from primitives. Design team: consider adding this to the DS.',
+  dsDriftCat?.id
+);
 ```
 
 > **Note:** Always use `categoryId?.id` (optional chaining) so a `null` category (returned
