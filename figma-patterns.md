@@ -19,6 +19,7 @@ Common patterns for building prototype-to-Figma output. Read this before your fi
 9. Positioning and spacing
 10. Annotation category reference
 11. Defensive annotation helpers (platform-safe)
+12. Prototype Spec Document template (Inspect-only clients)
 
 ---
 
@@ -546,3 +547,84 @@ await annotateNode(emailField, '**Validation:** Required, must be valid email', 
 > **Note:** Always use `categoryId?.id` (optional chaining) so a `null` category (returned
 > when the API is unavailable) degrades gracefully to an uncategorized annotation rather than
 > throwing.
+
+---
+
+## 12. Prototype Spec Document template (Inspect-only clients)
+
+Use this when Write tools (`use_figma`) are unavailable. Produce a structured markdown document
+the team can read and comment on directly.
+
+```markdown
+# [Feature Name] — Prototype Spec
+
+**Generated from:** [prototype file path or description]
+**Target Figma file:** [URL if provided, or "not specified"]
+**Date:** [today]
+
+---
+
+## Overview
+
+[2–3 sentence description of what the prototype demonstrates]
+
+**Open questions for reviewers:**
+- [List ambiguous behaviors or design decisions needing input]
+
+---
+
+## Flows
+
+### Flow 1: [Flow Name]
+
+**Goal:** [What the user is trying to accomplish]
+**Entry point:** [What triggers this flow]
+
+#### States
+
+**1.1 — [State name]**
+- **Frame size:** 1440×900 (desktop) / 390×844 (mobile)
+- **Layout:** [Describe the overall layout]
+- **Components:**
+  - [Component name] (`<Button variant="primary">`) → DS match: Button/Primary [verified] or [unverified]
+  - [Component name] → No DS match: build from primitives
+
+- **Interactions:**
+  | Element | Trigger | Result | Notes |
+  |---|---|---|---|
+  | Save button | Click | Validates form → loading (→ 1.2) | Debounced 300ms |
+
+- **Annotations:**
+  - **Interaction:** [click targets and results]
+  - **Validation:** [form rules]
+  - **Data / API:** [endpoints, data sources]
+  - **Error Handling:** [errors, recovery]
+  - **Edge Cases:** [non-obvious behavior]
+  - **Accessibility:** [tab order, keyboard shortcuts]
+
+---
+
+## Component inventory
+
+| Code component | Props | DS match | Confidence | Build approach |
+|---|---|---|---|---|
+| `<Button>` | variant="primary", size="md" | Button/Primary | High | Import + setProperties |
+| `<DataTable>` | columns, rows | Table | Medium | Import + setProperties |
+| `<CustomWidget>` | (custom) | None | — | Primitives |
+
+---
+
+## Figma build guide
+
+*For whoever builds this in Figma:*
+
+**Page:** "[Feature Name] — Prototype Flows"
+**Frame sizes:** 1440×900 desktop / 390×844 mobile
+**Layout:** Left-to-right per flow, branches stacked vertically, 200px gaps
+
+**Components to import from DS:** [list from inventory above]
+**Components to build from primitives:** [list from inventory above]
+
+**Important:** For components without DS matches, build from primitives (frames, rectangles,
+text, auto-layout). Do NOT call `figma.createComponent()`. Do NOT skip the element.
+```
