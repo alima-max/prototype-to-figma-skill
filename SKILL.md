@@ -244,6 +244,14 @@ to Phase 1b.
 Note the overall page structure: navigation, sidebars, content areas, overlays.
 Identify what stays constant across states vs. what changes.
 
+**4. Scrollable states**
+For each state frame, note whether the content is taller than the viewport:
+- Look for `overflow-y: scroll/auto`, `overflow: scroll/auto`, or body-level page scroll in the prototype CSS/styles
+- Look for long lists, feeds, tables, or multi-section pages where content clearly exceeds one screenful
+- Estimate the full content height (e.g. 1800px for a two-screen-tall page)
+
+Mark each scrollable state in your inventory — these frames need special handling in Phase 4.
+
 ---
 
 ### Phase 1b: Present scope, get selection, confirm
@@ -393,7 +401,8 @@ Page: "[Feature Name] — Prototype Flows"
 ```
 
 **Frame layout conventions:**
-- Consistent frame size (1440×900 desktop, 390×844 mobile — match the prototype's viewport)
+- Default frame size: 1440×900 desktop, 390×844 mobile — match the prototype's viewport
+- **Scrollable states:** frame height = full content height (never clip at viewport). Add a fold marker line at the viewport height so reviewers know where the fold is. See `figma-patterns.md` Section 2 for the scrollable frame pattern.
 - Frames left-to-right within a flow, branching paths stacked vertically
 - ~200px gaps between frames, ~400px between flow sections
 
@@ -421,6 +430,10 @@ Via `Figma:use_figma`, create or navigate to the target page.
 **3. Build each flow, frame by frame**
 
 For each frame, build every element from the Phase 2 mapping table. Do not skip any.
+
+If the state was marked scrollable in Phase 1a, use the scrollable frame pattern from
+`figma-patterns.md` Section 2 — set frame height to the full content height, set
+`overflowDirection = 'VERTICAL'`, and add a fold marker line at the viewport height.
 
 For each element, choose the correct approach based on the mapping table:
 
