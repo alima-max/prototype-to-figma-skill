@@ -58,9 +58,9 @@ mobileFrame.fills = [{ type: 'SOLID', color: { r: 1, g: 1, b: 1 } }];
 const container = figma.createFrame();
 container.name = "Header";
 container.layoutMode = 'HORIZONTAL';
-container.primaryAxisSizingMode = 'FIXED';
-container.counterAxisSizingMode = 'AUTO';
-container.resize(1440, 1); // height auto-expands
+container.resize(1440, 1);               // ← resize() FIRST
+container.primaryAxisSizingMode = 'FIXED';  // ← sizing modes AFTER resize()
+container.counterAxisSizingMode = 'AUTO';   // height auto-expands
 container.paddingTop = 16;
 container.paddingBottom = 16;
 container.paddingLeft = 24;
@@ -68,6 +68,13 @@ container.paddingRight = 24;
 container.itemSpacing = 12;
 container.fills = [{ type: 'SOLID', color: { r: 0.97, g: 0.97, b: 0.97 } }];
 ```
+
+> **Gotcha: always call `resize()` before setting sizing modes.**
+> Calling `resize()` on an auto-layout frame silently resets `primaryAxisSizingMode` and
+> `counterAxisSizingMode` back to `'FIXED'`. If you set them before `resize()`, the frame
+> collapses to 1px tall (or wide) and renders as invisible. The fix: call `resize()` first,
+> then set sizing modes. This applies to every auto-layout frame — including the flow overview
+> frame and any container that should grow with its content.
 
 ### Scrollable frames
 
