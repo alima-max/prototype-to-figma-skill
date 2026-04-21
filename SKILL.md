@@ -582,6 +582,30 @@ a new file was created in Phase 0 (the user has no other way to find it).
 
 ---
 
+## Definition of done
+
+**Do not report the task complete or summarize to the user until every box below is checked.**
+Work through any unchecked items before responding. If the user asks you to stop before you
+finish, explicitly list which boxes are still unchecked rather than glossing over them.
+
+### Per flow (repeat for every in-scope flow)
+
+- [ ] **One state frame per distinct state** — including loading, error, empty, and every branch (success path and failure path are separate frames)
+- [ ] **Every UI element from the Phase 2 inventory is present** in each frame — either as a DS component instance or a primitive approximation. Nothing is omitted.
+- [ ] **Every interactive element has at least one annotation** — buttons, inputs, links, toggles, dropdowns, and any tappable area. Use `figma.currentPage.findAll(n => n.annotations?.length > 0)` to count annotated nodes and sanity-check the number against the frame's interactive element count. A frame with 5 interactive elements should have ≥ 5 annotated nodes.
+- [ ] **Every DS mismatch has a DS Drift annotation** — both "DS component exists but is missing this variant/prop" and "no DS match found, built from primitives."
+- [ ] **Flow connector arrows** between every pair of adjacent state frames, each annotated with the transition trigger (what the user did or what the system returned).
+- [ ] **Scrollable frames** are sized to full content height (not clipped at viewport) and have a fold marker line at the viewport boundary.
+
+### For the whole file
+
+- [ ] **Flow overview frame** exists at the top of the page with: feature name, numbered flow list, annotation category legend, open questions for reviewers, and a list of DS gaps (primitives that need DS components).
+- [ ] **Screenshot verified** — `get_screenshot` taken on the overview frame and at least 2 state frames. Annotations are visible in the screenshot. If they are not visible, the annotation step did not complete correctly — go back and fix it before continuing.
+- [ ] **`figma.createComponent()` was never called** — no new master components were created in the file.
+- [ ] **File URL is ready to share** with the user.
+
+---
+
 ## Prototype Spec Document — output for Inspect-only clients
 
 When Write tools are unavailable, produce a structured markdown document using the template in
