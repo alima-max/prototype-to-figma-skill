@@ -33,9 +33,9 @@ The user has built (or is working on) a prototype in Claude Code and wants to:
 
 ---
 
-## Two non-negotiable rules
+## Three non-negotiable rules
 
-These rules exist to prevent the two bugs most commonly reported by users of this skill:
+These rules exist to prevent the bugs most commonly reported by users of this skill:
 
 ### Rule 1: Never create new Figma components
 
@@ -57,6 +57,28 @@ component instance (if a match was found) or as a primitive approximation (if no
 
 Do not skip an element because you couldn't find its DS match. Skipping elements is what causes
 reviewers to see a Figma file that's missing whole sections of the prototype UI.
+
+### Rule 3: Every interactive element must be annotated — on every platform
+
+**Annotations are the primary deliverable of this skill.** A frame with no annotations is just a
+screenshot of a UI, not a design spec. Do not skip the annotation phase under any circumstances,
+regardless of which AI editor or client you are running on.
+
+**This rule applies on every platform** — Claude Code, Codex, Cursor, VS Code, Copilot CLI,
+Augment Code, and all others. Annotations must be present in the output.
+
+Use the defensive helpers in `figma-patterns.md` Section 11 — they handle API errors (e.g.,
+categories that already exist) and fall back to canvas text overlays if the native
+`figma.annotations` API is unavailable. **Never silently drop annotations because of an API
+error.** If native annotations fail, use the text fallback. If text placement fails, embed the
+annotation text directly in the frame or layer name. Something is always better than nothing.
+
+**Every frame must have at minimum:**
+- One annotation per clickable/interactive element (trigger + result)
+- One annotation per form field (validation rules)
+- One annotation per state frame (what caused this state, how the user leaves it)
+
+The annotation density should be HIGH. When in doubt, annotate more.
 
 ---
 
@@ -472,10 +494,13 @@ either as DS instances or primitives — before proceeding.
 
 ---
 
-**4. Add interaction annotations using Figma's native annotation API**
+**4. Add interaction annotations — required on every platform**
 
 This is what makes the output useful for async review. Without this, reviewers just see static
 screens with no indication of what's interactive or how states connect.
+
+**This step is non-negotiable (Rule 3).** Do not skip it. Do not abbreviate it. It applies
+regardless of which AI editor or client is executing this skill.
 
 Figma's annotation system surfaces directly in Dev Mode — not colored rectangles on the canvas.
 Annotations attach to specific layers, appear in the Dev Mode sidebar, support markdown, and
@@ -483,33 +508,23 @@ can be filtered by category.
 
 **Every interactive element in every frame MUST get an annotation.**
 
-**Step 4a: Set up annotation categories**
+**Step 4a: Set up annotation categories using the defensive helper**
+
+Use `getOrCreateAnnotationCategory` from `figma-patterns.md` Section 11. This handles the case
+where categories already exist in the file (which causes `addAnnotationCategoryAsync` to throw),
+and returns `null` if the native API is fully unavailable — in which case `annotateNode` will
+automatically fall back to canvas text overlays.
 
 ```javascript
-const interactionCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Interaction', color: 'blue'
-});
-const navigationCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Navigation', color: 'violet'
-});
-const stateCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'State Change', color: 'teal'
-});
-const validationCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Validation', color: 'orange'
-});
-const errorCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Error Handling', color: 'red'
-});
-const edgeCaseCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Edge Case', color: 'pink'
-});
-const dataCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Data / API', color: 'green'
-});
-const a11yCat = await figma.annotations.addAnnotationCategoryAsync({
-  label: 'Accessibility', color: 'yellow'
-});
+// Use the helper from figma-patterns.md Section 11
+const interactionCat = await getOrCreateAnnotationCategory('Interaction', 'blue');
+const navigationCat  = await getOrCreateAnnotationCategory('Navigation',  'violet');
+const stateCat       = await getOrCreateAnnotationCategory('State Change', 'teal');
+const validationCat  = await getOrCreateAnnotationCategory('Validation',   'orange');
+const errorCat       = await getOrCreateAnnotationCategory('Error Handling','red');
+const edgeCaseCat    = await getOrCreateAnnotationCategory('Edge Case',    'pink');
+const dataCat        = await getOrCreateAnnotationCategory('Data / API',   'green');
+const a11yCat        = await getOrCreateAnnotationCategory('Accessibility', 'yellow');
 ```
 
 Available colors: `'yellow'`, `'orange'`, `'red'`, `'pink'`, `'violet'`, `'blue'`, `'teal'`,
@@ -517,40 +532,38 @@ Available colors: `'yellow'`, `'orange'`, `'red'`, `'pink'`, `'violet'`, `'blue'
 
 **Step 4b: Annotate every interactive element**
 
+Use `annotateNode` from `figma-patterns.md` Section 11 instead of direct property assignment.
+It wraps `node.annotations = [...]` with a try/catch and falls back to canvas text overlays
+if the native API fails — ensuring annotations always appear in the output.
+
 ```javascript
 // Annotate a button
-saveButton.annotations = [
-  {
-    labelMarkdown: '**On click →** Validates all form fields.\n\n' +
-      '- If valid: shows loading spinner (→ Frame 1.3), then `POST /api/items`\n' +
-      '- If invalid: highlights error fields, shows inline errors (→ Frame 1.4b)\n\n' +
-      '*Debounced: 300ms cooldown after last click*',
-    categoryId: interactionCat.id
-  }
-];
+await annotateNode(
+  saveButton,
+  '**On click →** Validates all form fields.\n\n' +
+  '- If valid: shows loading spinner (→ Frame 1.3), then `POST /api/items`\n' +
+  '- If invalid: highlights error fields, shows inline errors (→ Frame 1.4b)\n\n' +
+  '*Debounced: 300ms cooldown after last click*',
+  interactionCat?.id
+);
 
-// Annotate a form field
-emailField.annotations = [
-  {
-    labelMarkdown: '**Validation rules:**\n- Required\n- Must match email regex\n' +
-      '- Uniqueness check via `GET /api/users/check-email`\n- Error shown on blur',
-    categoryId: validationCat.id
-  },
-  {
-    labelMarkdown: '**Keyboard:** Tab to next field. Enter submits form.',
-    categoryId: a11yCat.id
-  }
-];
+// Annotate a form field — multiple annotations, one per concern
+await annotateNode(
+  emailField,
+  '**Validation rules:**\n- Required\n- Must match email regex\n' +
+  '- Uniqueness check via `GET /api/users/check-email`\n- Error shown on blur',
+  validationCat?.id
+);
+await annotateNode(emailField, '**Keyboard:** Tab to next field. Enter submits form.', a11yCat?.id);
 
 // Annotate a loading state frame
-loadingFrame.annotations = [
-  {
-    labelMarkdown: '**State: Loading**\n\nTriggered after successful validation.\n' +
-      'Spinner replaces button text. All fields disabled.\n\n' +
-      '**Timeout:** 10s → error toast, form re-enabled (→ Frame 1.4b)',
-    categoryId: stateCat.id
-  }
-];
+await annotateNode(
+  loadingFrame,
+  '**State: Loading**\n\nTriggered after successful validation.\n' +
+  'Spinner replaces button text. All fields disabled.\n\n' +
+  '**Timeout:** 10s → error toast, form re-enabled (→ Frame 1.4b)',
+  stateCat?.id
+);
 ```
 
 **Step 4c: Annotation checklist (run for every frame)**
@@ -580,12 +593,7 @@ arrow.y = frame1.y + frame1.height / 2;
 arrow.strokes = [{ type: 'SOLID', color: { r: 0.2, g: 0.4, b: 1 } }];
 arrow.strokeWeight = 2;
 arrow.strokeCap = 'ARROW_EQUILATERAL';
-arrow.annotations = [
-  {
-    labelMarkdown: '**Transition:** On successful save (HTTP 200)',
-    categoryId: navigationCat.id
-  }
-];
+await annotateNode(arrow, '**Transition:** On successful save (HTTP 200)', navigationCat?.id);
 ```
 
 ---
