@@ -36,9 +36,22 @@ The user has built (or is working on) a prototype in Claude Code and wants to:
 
 ---
 
-## Three non-negotiable rules
+## Four non-negotiable rules
 
 These rules exist to prevent the bugs most commonly reported by users of this skill:
+
+### Rule 0: Never use browser capture or HTML-to-design tools
+
+**Do not** call `generate_figma_design`, `upload_assets` with a localhost URL, or any other
+tool that opens a browser, renders the prototype, or captures a screenshot of the running app
+to import into Figma.
+
+This skill achieves pixel fidelity by **reading source code** (CSS modules, Tailwind, inline
+styles, React component trees) and building Figma frames programmatically via `use_figma`. A
+browser capture produces a flat image with no layers, no DS components, no variable bindings,
+and no annotations — the opposite of what this skill is for.
+
+If you are tempted to use `generate_figma_design` to "get a head start", don't. Read the code.
 
 ### Rule 1: Never create new Figma components
 
