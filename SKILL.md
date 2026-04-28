@@ -53,21 +53,36 @@ what was missing, and list it in the Phase 6 summary.
 Every visible element must appear in the Figma output — DS instance or primitive. Skipping
 elements because you couldn't find a DS match is the most common cause of incomplete outputs.
 
-### Rule 3: Annotations must be attached to nodes — not floating on the canvas
+### Rule 3: Annotations must be attached to nodes, and must be flow-critical only
 
 **Annotations are what make this output useful for review.** A frame with no annotations is
-just a static image, not a design spec.
+just a static image. But annotating every tap target creates noise that buries the actual flow.
 
 Annotate using `node.annotations = [...]` on the actual layer — this surfaces in Figma Dev Mode
 on the correct element. **Never create floating text boxes or separate annotation frames** as a
 substitute. If the native API fails, fall back to `figma-patterns.md` Section 11.
 
 Two categories only:
-- **Interaction** (blue) — tap/click triggers and results, state transitions
+- **Interaction** (blue) — state transitions, primary CTAs, grouped controls
 - **DS Drift** (orange) — missing DS component, missing variant, or unbound color/spacing
 
-Every interactive element must have an Interaction annotation. Every element with a drift note
-from Phase 2 must have a DS Drift annotation.
+**Annotate (Interaction):**
+- **Frame-level** — one annotation per frame: what state this is and what the primary action does / where it goes next
+- **State-advancing CTAs** — the action(s) that trigger a state change (e.g., Submit, Confirm, Create goal, Move to completed)
+- **Grouped controls** — annotate the container once, not each item (annotate the amount picker row, not each chip; annotate the story pill rail, not each pill)
+- **Non-obvious tap targets** — elements that open a new state but don't look like buttons (e.g., a goal card that opens a detail sheet)
+
+**Do not annotate:**
+- Close / cancel / dismiss buttons
+- Nav bar buttons and tab items
+- Secondary utility actions (settings, prototype controls)
+- Individual chips or pills within a grouped picker
+- Backdrops and overlays
+- Decorative elements
+
+**Target: 2–4 Interaction annotations per frame.** A reviewer should be able to read all annotations on a frame in under 30 seconds and understand the complete flow.
+
+Every element with a DS Drift note from Phase 2 must have a DS Drift annotation.
 
 ---
 
@@ -269,8 +284,9 @@ if (!dsDriftCat) customCard.name += ' [DS Drift: no Card/Goal in DS]';
 ```
 
 **Annotation checklist per frame:**
-- [ ] Every tappable/clickable element has an Interaction annotation (trigger + result)
-- [ ] Every state frame has an Interaction annotation (what caused this state, how user exits)
+- [ ] Frame itself has one annotation: current state + what the primary action does / where it leads
+- [ ] Each state-advancing CTA has an annotation (trigger → result)
+- [ ] Grouped controls (pickers, pill rails, option lists) have one annotation for the group, not per item
 - [ ] Every primitive or mismatched DS component has a DS Drift annotation
 
 Completeness check: before moving to the next frame, verify every row from the Phase 2 mapping
@@ -328,6 +344,11 @@ Mode. Floating text boxes and separate annotation frames are noise, not annotati
 
 **Name everything.** "Frame 47" is useless. "2.3a — Save success with toast" tells a reviewer
 exactly where they are.
+
+**Annotate flows, not tap targets.** The goal is for a reviewer to read all annotations on a
+frame in under 30 seconds and understand the complete flow. Annotate the state transition, not
+the mechanism — one annotation on the amount picker row beats four identical annotations on each
+chip inside it.
 
 **Be explicit about DS gaps.** List every primitive in the summary so the design team knows what
 components are missing from the DS. This turns unmatched elements from a silent failure into
