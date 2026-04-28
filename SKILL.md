@@ -289,6 +289,12 @@ the Tailwind responsive prefix. Read the prototype's CSS modules, Tailwind confi
 Record the chosen breakpoint (e.g., "mobile 390px" or "desktop 1440px") and document it in the
 Phase 3 plan and the Phase 6 summary.
 
+**Do not recreate the device shell in Figma.** If the prototype wraps screens in a `.phone`,
+`.device-frame`, or similar container (often with auto-layout, drop shadow, and border-radius),
+extract its content dimensions and use those for the state frame size — but do not create a
+wrapper frame around the state frames in Figma. The state frame itself represents the viewport.
+Discard the shell's drop shadow, border-radius, and auto-layout from your measurements.
+
 **Per-element measurements**
 
 For each visible node in the React tree (from the Phase 1a component inventory), read the
