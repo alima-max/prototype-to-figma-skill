@@ -78,10 +78,10 @@ annotation text directly in the frame or layer name. Something is always better 
 
 **Every frame must have at minimum:**
 - One annotation per clickable/interactive element (trigger + result)
-- One annotation per form field (validation rules)
 - One annotation per state frame (what caused this state, how the user leaves it)
+- One annotation per element with a DS drift note (no DS match, or DS component missing a required variant/behavior)
 
-The annotation density should be HIGH. When in doubt, annotate more. Always use `node.annotations = [...]` on actual interactive elements — not colored rectangles on the canvas.
+Annotate only to communicate interaction behavior or DS drift — do not annotate for validation rules, API details, accessibility notes, or other concerns. Always use `node.annotations = [...]` on actual interactive elements — not colored rectangles on the canvas.
 
 ---
 
@@ -129,7 +129,7 @@ and automatically uses the best possible workflow for your client.
   and contextual metadata for a node. Use to understand existing Figma file structure.
 - **`Figma:get_metadata`** — XML overview of file/page structure: node IDs, layer types, names,
   positions, sizes. Use for quick structural overview.
-- **`Figma:get_screenshot`** — Generate a screenshot of any node. Use in verification phase.
+- **`Figma:get_screenshot`** — Generate a screenshot of any node. Use only if the user explicitly asks to see a visual preview of a frame.
 - **`Figma:search_design_system`** — Search the target file's linked libraries for components,
   variables, and styles.
   - Components: `search_design_system(fileKey, query="Button", includeComponents=true)`
@@ -605,7 +605,14 @@ where categories already exist in the file (which causes `addAnnotationCategoryA
 and returns `null` if the native API is fully unavailable — in which case `annotateNode` will
 automatically fall back to canvas text overlays.
 
-See `figma-patterns.md` Section 11 for the full category setup — all eight interaction categories plus the DS Drift category.
+Set up exactly two annotation categories — Interaction and DS Drift:
+
+```javascript
+const interactionCat = await getOrCreateAnnotationCategory("Interaction", { r: 0.2, g: 0.4, b: 1 });
+const dsDriftCat     = await getOrCreateAnnotationCategory("DS Drift",    { r: 1,   g: 0.4, b: 0 });
+```
+
+See `figma-patterns.md` Section 11 for `getOrCreateAnnotationCategory` — it handles the case where a category already exists and returns `null` if the native API is unavailable, in which case `annotateNode` falls back to canvas text overlays.
 
 **Step 4b: Annotate every interactive element**
 
@@ -614,19 +621,15 @@ fallback so they always appear regardless of platform. See Section 11 for usage 
 
 **Step 4c: Annotation checklist (run for every frame)**
 
-- [ ] **Clickable elements**: What happens on click? Where does the user go?
-- [ ] **Form fields**: Validation rules, required/optional, input masks, character limits
-- [ ] **State triggers**: What caused this state? How does the user leave it?
-- [ ] **Loading behaviors**: Duration, timeout handling, what's disabled during load
-- [ ] **Error states**: What errors are possible? How shown? Recovery paths?
-- [ ] **Empty states**: When does this appear? What action moves the user forward?
-- [ ] **Conditional visibility**: What determines if this element shows/hides?
-- [ ] **Data dependencies**: What API calls? What if data is missing/slow/stale?
-- [ ] **Keyboard/a11y**: Tab order, keyboard shortcuts, screen reader considerations
-- [ ] **Animations/transitions**: Duration, easing, what triggers them
+**Interaction** (use `interactionCat`):
+- [ ] Every clickable/tappable element: what triggers it and what happens as a result
+- [ ] Every state frame: what caused this state and how the user exits it
 
-The annotation density should be HIGH — a frame with 5 interactive elements should have
-at minimum 5 annotations.
+**DS Drift** (use `dsDriftCat`):
+- [ ] Every element built from primitives: note what was searched and that a DS component is needed
+- [ ] Every DS component with a missing variant or behavior the prototype requires: describe the gap
+
+Annotate nothing else. One annotation per interactive element or drift point is sufficient.
 
 For flow connectors between frames, see `figma-patterns.md` Section 7 for the arrow pattern — remember to call `annotateNode` on the arrow to label the transition trigger.
 
@@ -638,16 +641,9 @@ Create a summary frame at the top of the page:
 
 - **Feature name and description**
 - **Flow list** — numbered list of flows with brief descriptions
-- **Legend** — annotation categories:
-  - Blue (Interaction) = click/tap triggers and results
-  - Violet (Navigation) = transitions and routing
-  - Teal (State Change) = state descriptions and conditions
-  - Orange (Validation) = form rules and constraints
-  - Red (Error Handling) = errors, recovery, fallbacks
-  - Pink (Edge Case) = timing quirks, race conditions
-  - Green (Data / API) = endpoints, loading, caching
-  - Yellow (Accessibility) = keyboard, screen reader, a11y
-  - Note: Reviewers can **filter by category** in Dev Mode
+- **Legend** — two annotation categories (filterable in Dev Mode):
+  - Blue (Interaction) = click/tap triggers and state transitions
+  - Orange (DS Drift) = no DS match found, or DS component missing a required variant/behavior
 - **Open questions** — flag ambiguous behaviors explicitly
 - **Components without DS matches** — list any elements built from primitives so the design
   team knows what DS components are still needed
@@ -659,20 +655,19 @@ Create a summary frame at the top of the page:
 
 ### Phase 6: Verify, link, and present
 
-**6a. Visual verification** *(Inspect tools available)*
+**6a. Completeness check against the Phase 1c mapping**
 
-Take screenshots of the output to verify. **Call `Figma:get_screenshot(fileKey, nodeId)` on
-every state frame** (not only the overview) — one screenshot per frame. This is the only way
-to catch layout breaks, missing elements, or wrong sizing before the user sees the file.
+The Phase 1c prototype→Figma layer mapping is the source of truth — no screenshots needed.
+Before moving to 6b, verify in the layer tree (via `Figma:get_metadata` or by reviewing the
+`use_figma` output) that:
 
-For each screenshot, verify:
+- Every row in the Phase 1c mapping table has a corresponding named layer in the output
 - Frame dimensions match the Phase 1c recorded viewport (e.g., 390×844)
-- All elements from the Phase 1c prototype→Figma mapping are present at the correct sizes
-- No unexpected components were created in the file's local assets
-- DS component instances are using the correct variants and states
-- Primitive elements use DS variable bindings (not raw hardcoded values) wherever available
+- No unexpected components were created in the file's local assets (no new master components)
+- DS component instances were set to the correct variants and states
+- Primitive elements have DS variable bindings wherever variables were found in Phase 2
 
-*If Inspect tools are unavailable, skip and note it to the user.*
+If anything is missing, fix it now with a follow-up `use_figma` call before presenting to the user. Do not call `get_screenshot` unless the user explicitly asks for a visual preview.
 
 **6b. Code Connect linking** *(Code Connect tier, optional)*
 
