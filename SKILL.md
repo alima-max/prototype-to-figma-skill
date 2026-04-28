@@ -78,10 +78,10 @@ annotation text directly in the frame or layer name. Something is always better 
 
 **Every frame must have at minimum:**
 - One annotation per clickable/interactive element (trigger + result)
-- One annotation per form field (validation rules)
 - One annotation per state frame (what caused this state, how the user leaves it)
+- One annotation per element with a DS drift note (no DS match, or DS component missing a required variant/behavior)
 
-The annotation density should be HIGH. When in doubt, annotate more. Always use `node.annotations = [...]` on actual interactive elements — not colored rectangles on the canvas.
+Annotate only to communicate interaction behavior or DS drift — do not annotate for validation rules, API details, accessibility notes, or other concerns. Always use `node.annotations = [...]` on actual interactive elements — not colored rectangles on the canvas.
 
 ---
 
@@ -605,7 +605,14 @@ where categories already exist in the file (which causes `addAnnotationCategoryA
 and returns `null` if the native API is fully unavailable — in which case `annotateNode` will
 automatically fall back to canvas text overlays.
 
-See `figma-patterns.md` Section 11 for the full category setup — all eight interaction categories plus the DS Drift category.
+Set up exactly two annotation categories — Interaction and DS Drift:
+
+```javascript
+const interactionCat = await getOrCreateAnnotationCategory("Interaction", { r: 0.2, g: 0.4, b: 1 });
+const dsDriftCat     = await getOrCreateAnnotationCategory("DS Drift",    { r: 1,   g: 0.4, b: 0 });
+```
+
+See `figma-patterns.md` Section 11 for `getOrCreateAnnotationCategory` — it handles the case where a category already exists and returns `null` if the native API is unavailable, in which case `annotateNode` falls back to canvas text overlays.
 
 **Step 4b: Annotate every interactive element**
 
@@ -614,19 +621,15 @@ fallback so they always appear regardless of platform. See Section 11 for usage 
 
 **Step 4c: Annotation checklist (run for every frame)**
 
-- [ ] **Clickable elements**: What happens on click? Where does the user go?
-- [ ] **Form fields**: Validation rules, required/optional, input masks, character limits
-- [ ] **State triggers**: What caused this state? How does the user leave it?
-- [ ] **Loading behaviors**: Duration, timeout handling, what's disabled during load
-- [ ] **Error states**: What errors are possible? How shown? Recovery paths?
-- [ ] **Empty states**: When does this appear? What action moves the user forward?
-- [ ] **Conditional visibility**: What determines if this element shows/hides?
-- [ ] **Data dependencies**: What API calls? What if data is missing/slow/stale?
-- [ ] **Keyboard/a11y**: Tab order, keyboard shortcuts, screen reader considerations
-- [ ] **Animations/transitions**: Duration, easing, what triggers them
+**Interaction** (use `interactionCat`):
+- [ ] Every clickable/tappable element: what triggers it and what happens as a result
+- [ ] Every state frame: what caused this state and how the user exits it
 
-The annotation density should be HIGH — a frame with 5 interactive elements should have
-at minimum 5 annotations.
+**DS Drift** (use `dsDriftCat`):
+- [ ] Every element built from primitives: note what was searched and that a DS component is needed
+- [ ] Every DS component with a missing variant or behavior the prototype requires: describe the gap
+
+Annotate nothing else. One annotation per interactive element or drift point is sufficient.
 
 For flow connectors between frames, see `figma-patterns.md` Section 7 for the arrow pattern — remember to call `annotateNode` on the arrow to label the transition trigger.
 
@@ -638,16 +641,9 @@ Create a summary frame at the top of the page:
 
 - **Feature name and description**
 - **Flow list** — numbered list of flows with brief descriptions
-- **Legend** — annotation categories:
-  - Blue (Interaction) = click/tap triggers and results
-  - Violet (Navigation) = transitions and routing
-  - Teal (State Change) = state descriptions and conditions
-  - Orange (Validation) = form rules and constraints
-  - Red (Error Handling) = errors, recovery, fallbacks
-  - Pink (Edge Case) = timing quirks, race conditions
-  - Green (Data / API) = endpoints, loading, caching
-  - Yellow (Accessibility) = keyboard, screen reader, a11y
-  - Note: Reviewers can **filter by category** in Dev Mode
+- **Legend** — two annotation categories (filterable in Dev Mode):
+  - Blue (Interaction) = click/tap triggers and state transitions
+  - Orange (DS Drift) = no DS match found, or DS component missing a required variant/behavior
 - **Open questions** — flag ambiguous behaviors explicitly
 - **Components without DS matches** — list any elements built from primitives so the design
   team knows what DS components are still needed
