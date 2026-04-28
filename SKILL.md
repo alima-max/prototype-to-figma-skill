@@ -17,9 +17,12 @@ description: >
 
 This skill takes a working Claude Code prototype (a sandbox environment templated from the user's
 live app, using their real component library) and produces a structured Figma file that
-cross-functional partners can review asynchronously. The goal is **not** pixel-perfect mockups —
-it's making the interaction logic, flows, and design decisions legible to reviewers who can't
-easily walk through a live prototype.
+cross-functional partners can review asynchronously.
+
+**Primary success metric:** visual and structural parity with the running localhost prototype —
+layout, spacing, type scale, colors, component hierarchy, and per-step UI copy — within the
+constraints of the MCP toolchain and the chosen breakpoint. Annotations are a required layer on
+top of that parity, not a substitute for it.
 
 **This skill works across all Figma MCP clients.** The output format adapts to what your client
 supports — see [Client Compatibility](#client-compatibility) below.
@@ -254,6 +257,57 @@ Mark each scrollable state in your inventory — these frames need special handl
 
 ---
 
+### Phase 1c: Pixel parity — measure from code
+
+This phase is mandatory. Run it immediately after Phase 1a, before Phase 2 and before building
+anything in Figma. Its output is the source of truth for every frame dimension, spacing value,
+and color in Phase 4.
+
+**Viewport / frame dimensions**
+
+Locate the outermost container class that defines the prototype's viewport for the chosen
+breakpoint — e.g., `.phone`, `.container`, `max-w-*`, the root layout div's inline style, or
+the Tailwind responsive prefix. Read the prototype's CSS modules, Tailwind config
+(`tailwind.config.js`), and any inline styles to extract:
+- The frame width (and fixed height if set). Example: `.phone { width: 390px; height: 844px }` →
+  every state frame must be **390×844** in Figma unless the user specifies otherwise.
+- `max-width` constraints for content areas (e.g., `max-w-lg = 512px`).
+
+Record the chosen breakpoint (e.g., "mobile 390px" or "desktop 1440px") and document it in the
+Phase 3 plan and the Phase 6 summary.
+
+**Per-element measurements**
+
+For each visible node in the React tree (from the Phase 1a component inventory), read the
+associated CSS module, Tailwind classes, or inline styles and record:
+
+| Prototype element | Source (file:selector or Tailwind class) | W | H | padding (T/R/B/L) | gap | border-radius | font-size | line-height | color / bg |
+|---|---|---|---|---|---|---|---|---|---|
+| Primary CTA Button | Button.module.css `.root` | 100% | 48px | 12px 24px | — | 8px | 16px | 1.5 | #007AFF / — |
+| Section card | styles.module.css `.card` | 100% | auto | 16px | 12px | 12px | — | — | — / #F5F5F5 |
+
+Collect at minimum: container widths, all gap/spacing bands present (4 / 8 / 12 / 16 / 24px
+etc.), primary and secondary color fills and backgrounds, border-radii for interactive elements,
+and the type scale (font-size + line-height pairs) for each text role in the screen.
+
+**Explicit prototype → Figma layer mapping**
+
+Extend the component inventory with target geometry for the Figma build:
+
+| Prototype element | Figma layer name | Target W × H | DS token / variable (or fallback raw value) |
+|---|---|---|---|
+| Page shell | Frame "1.1 — Default" | 390 × 844 | — |
+| Top nav bar | Nav / top-nav | 390 × 56 | color/surface, spacing/md |
+| Primary CTA | Button (DS instance) | 358 × 48 | — |
+| Section gap | auto-layout `itemSpacing` | — | gap = 24px → `spacing/lg` or 24 |
+
+This mapping is the checklist for Phase 4: every row must appear in the Figma output at the
+recorded target size, placed with the measured padding and gap values. Any intentional deviation
+from these measurements (e.g., because a DS component has a fixed internal size) must be noted
+in the Phase 6 parity checklist with the reason.
+
+---
+
 ### Phase 1b: Present scope, get selection, confirm
 
 **Skip this phase if the prototype has 2 or fewer flows.** In that case, proceed directly to
@@ -357,15 +411,25 @@ For each component in your inventory:
 
 **Apply DS variables to every element — not just primitives**
 
-Look up and apply DS tokens wherever possible, regardless of whether the element is a DS
-component or a primitive:
+Look up and bind DS variables wherever possible, regardless of whether the element is a DS
+component or a primitive. The default path is:
+
+1. `search_design_system(fileKey, query="...", includeVariables=true)` to find the variable key
+2. `importVariableByKeyAsync(key)` inside `use_figma` to bring the variable into scope
+3. Bind it with:
+   - **Fills / strokes:** `node.setBoundVariableForPaint('fills', 0, variable)` (colors, backgrounds)
+   - **Corner radius:** `node.setBoundVariable('cornerRadius', variable)` (border-radii)
+   - **Padding / gaps:** `node.setBoundVariable('paddingTop', variable)` / `setBoundVariable('itemSpacing', variable)`
+
+Search for:
 - Color tokens: `search_design_system(fileKey, query="primary", includeVariables=true, includeComponents=false)`
 - Spacing: `search_design_system(fileKey, query="spacing", includeVariables=true, includeComponents=false)`
 - Typography: `search_design_system(fileKey, query="body", includeStyles=true, includeComponents=false)`
 
-Call `Figma:get_variable_defs(fileKey, nodeId)` to get exact hex/pixel values, then apply them
-to fills, strokes, padding, itemSpacing, and textStyleId. An element built from primitives but
-using DS color and spacing tokens is far better than one using hardcoded values.
+Call `Figma:get_variable_defs(fileKey, nodeId)` to confirm exact values when needed (hex,
+pixel), then bind rather than hardcode. **Only fall back to raw hex or raw pixel values if no
+DS variable exists for that role.** An element with bound DS variables is far better than one
+with hardcoded values, even if the fallback value is visually identical.
 
 **Strategy B: Code Connect reverse lookup (if Code Connect tools available)**
 
@@ -428,10 +492,31 @@ Execute the build using `Figma:use_figma`. Break it into manageable steps.
 
 **Step-by-step build order:**
 
-**1. Inspect the target file** *(if Inspect tools available)*
+**1. Inspect the target file and choose a placement location** *(if Inspect tools available)*
 
 Use `Figma:get_metadata(fileKey, nodeId="0:1")` to see the existing page structure. Use
 `Figma:get_design_context` on existing frames to understand what's already there.
+
+**Placement rules — single source of truth:**
+
+Before writing anything, scan the page for frames or sections whose names or structure match
+the prototype feature (e.g., same route, same feature keyword, same component name):
+
+- **If matching frames/sections exist:** prefer inserting new frames *inside* that region or
+  immediately beside it on the canvas (using the existing section's `x`/`y` as an anchor),
+  rather than appending at the bottom of the canvas. Use `Figma:get_design_context` on the
+  matching section to read its current bounds before placing.
+
+- **If no match exists:** create a clearly named section:
+  `[Prototype] <feature name> — pixel pass`
+  Place it next to the user's indicated node (from the Figma URL) or next to the main feature
+  area found in the file. Document the chosen parent nodeId in the Phase 6 summary so the user
+  can navigate directly.
+
+- **Never silently place frames at an arbitrary far-Y position.** If frames land outside the
+  visible canvas area (e.g., Y > 10 000), state the exact coordinates and include a Figma
+  deep-link (`figma.com/design/<fileKey>?node-id=<nodeId>`) in the final summary so the user
+  can find them immediately.
 
 **2. Set up the page**
 
@@ -445,7 +530,31 @@ If the state was marked scrollable in Phase 1a, use the scrollable frame pattern
 `figma-patterns.md` Section 2 — set frame height to the full content height, set
 `overflowDirection = 'VERTICAL'`, and add a fold marker line at the viewport height.
 
-For each element, choose the correct approach based on the mapping table:
+For each element, choose the correct approach based on the Phase 2 mapping table and the
+Phase 1c pixel-parity measurements. Set frame dimensions to the recorded target sizes before
+populating content.
+
+**DS variable binding — apply before raw values**
+
+For every color, border-radius, spacing, and gap on any node (DS instance or primitive): check
+the Phase 2 variable mapping first. If a variable was found for that role, bind it:
+
+```javascript
+// Colors / fills
+const colorVar = await figma.importVariableByKeyAsync(colorVarKey);
+node.setBoundVariableForPaint('fills', 0, colorVar);
+
+// Corner radius
+const radiusVar = await figma.importVariableByKeyAsync(radiusVarKey);
+node.setBoundVariable('cornerRadius', radiusVar);
+
+// Spacing / gaps
+const spacingVar = await figma.importVariableByKeyAsync(spacingVarKey);
+node.setBoundVariable('paddingTop', spacingVar);
+node.setBoundVariable('itemSpacing', spacingVar);
+```
+
+Fall back to the raw measured value (from Phase 1c) only if no DS variable exists for that role.
 
 ---
 
@@ -552,12 +661,16 @@ Create a summary frame at the top of the page:
 
 **6a. Visual verification** *(Inspect tools available)*
 
-Take screenshots of the output to verify:
-- Use `Figma:get_screenshot(fileKey, nodeId)` on the overview frame and 2–3 state frames
-- Verify all elements from the component inventory are present (completeness check)
-- Verify no unexpected components were created in the file's local assets
-- Check that DS component instances look correct (right variants, right states)
-- Check that primitive approximations are visually reasonable
+Take screenshots of the output to verify. **Call `Figma:get_screenshot(fileKey, nodeId)` on
+every state frame** (not only the overview) — one screenshot per frame. This is the only way
+to catch layout breaks, missing elements, or wrong sizing before the user sees the file.
+
+For each screenshot, verify:
+- Frame dimensions match the Phase 1c recorded viewport (e.g., 390×844)
+- All elements from the Phase 1c prototype→Figma mapping are present at the correct sizes
+- No unexpected components were created in the file's local assets
+- DS component instances are using the correct variants and states
+- Primitive elements use DS variable bindings (not raw hardcoded values) wherever available
 
 *If Inspect tools are unavailable, skip and note it to the user.*
 
@@ -572,13 +685,28 @@ Take screenshots of the output to verify:
 Share the Figma file URL and summarize. **Always include the file URL** — especially when
 a new file was created in Phase 0 (the user has no other way to find it).
 
-- **Figma file URL** — direct link to the file (or the specific page if added to an existing file)
+- **Figma file URL** — direct link to the file (or the specific page if added to an existing file);
+  if frames were placed at a non-obvious canvas location, include the deep-link
+  `figma.com/design/<fileKey>?node-id=<sectionNodeId>` and the coordinates
 - How many flows documented, how many total state frames
 - Which components used DS instances vs. built from primitives
 - List of all components built from primitives (DS gaps for the design team)
 - Code Connect links created (if any)
 - Open questions flagged for reviewers
 - Any steps skipped due to client capability limits
+
+**Parity checklist** — include one line per item in the summary:
+
+| Parity check | Result |
+|---|---|
+| Viewport size (W × H) | e.g., ✅ 390 × 844 on all frames |
+| Key spacing bands | e.g., ✅ 8 / 16 / 24px matched; ⚠️ card padding 14px → nearest DS token 12px (no 14px variable) |
+| Primary CTA placement | e.g., ✅ bottom-pinned at correct Y |
+| Number of major sections | e.g., ✅ 3 sections matching prototype |
+| DS variable binding | e.g., ✅ all colors bound; ⚠️ 2 border-radii hardcoded (no radius variable found) |
+
+Flag every intentional deviation with a one-phrase reason (e.g., "DS Button has fixed 44px
+height — prototype uses 48px; kept DS value"). Do not silently omit deviations.
 
 ---
 
@@ -591,8 +719,10 @@ When Write tools are unavailable, produce a structured markdown document using t
 
 ## Important principles
 
-**Optimize for reviewer comprehension, not designer precision.** Clear labels, obvious flow
-direction, and thorough annotations matter more than pixel-perfect spacing.
+**Achieve visual parity first, then annotate.** Match the prototype's layout, spacing, type
+scale, colors, and component hierarchy as closely as the toolchain allows. Annotations are
+required on top of that — they surface the interaction logic that static frames can't show on
+their own, not a substitute for getting the visual structure right.
 
 **Respect the design system.** Use DS component instances for matched components — this means
 reviewers see familiar patterns and can focus on the new interactions rather than decoding the
