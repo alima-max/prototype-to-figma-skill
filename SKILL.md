@@ -129,7 +129,7 @@ and automatically uses the best possible workflow for your client.
   and contextual metadata for a node. Use to understand existing Figma file structure.
 - **`Figma:get_metadata`** — XML overview of file/page structure: node IDs, layer types, names,
   positions, sizes. Use for quick structural overview.
-- **`Figma:get_screenshot`** — Generate a screenshot of any node. Use in verification phase.
+- **`Figma:get_screenshot`** — Generate a screenshot of any node. Use only if the user explicitly asks to see a visual preview of a frame.
 - **`Figma:search_design_system`** — Search the target file's linked libraries for components,
   variables, and styles.
   - Components: `search_design_system(fileKey, query="Button", includeComponents=true)`
@@ -659,20 +659,19 @@ Create a summary frame at the top of the page:
 
 ### Phase 6: Verify, link, and present
 
-**6a. Visual verification** *(Inspect tools available)*
+**6a. Completeness check against the Phase 1c mapping**
 
-Take screenshots of the output to verify. **Call `Figma:get_screenshot(fileKey, nodeId)` on
-every state frame** (not only the overview) — one screenshot per frame. This is the only way
-to catch layout breaks, missing elements, or wrong sizing before the user sees the file.
+The Phase 1c prototype→Figma layer mapping is the source of truth — no screenshots needed.
+Before moving to 6b, verify in the layer tree (via `Figma:get_metadata` or by reviewing the
+`use_figma` output) that:
 
-For each screenshot, verify:
+- Every row in the Phase 1c mapping table has a corresponding named layer in the output
 - Frame dimensions match the Phase 1c recorded viewport (e.g., 390×844)
-- All elements from the Phase 1c prototype→Figma mapping are present at the correct sizes
-- No unexpected components were created in the file's local assets
-- DS component instances are using the correct variants and states
-- Primitive elements use DS variable bindings (not raw hardcoded values) wherever available
+- No unexpected components were created in the file's local assets (no new master components)
+- DS component instances were set to the correct variants and states
+- Primitive elements have DS variable bindings wherever variables were found in Phase 2
 
-*If Inspect tools are unavailable, skip and note it to the user.*
+If anything is missing, fix it now with a follow-up `use_figma` call before presenting to the user. Do not call `get_screenshot` unless the user explicitly asks for a visual preview.
 
 **6b. Code Connect linking** *(Code Connect tier, optional)*
 
