@@ -232,14 +232,29 @@ coordinates and a deep-link in the Phase 6 summary.
 dimensions, radii, and colors.
 
 **DS variable binding** — for every fill, radius, and spacing where a variable key was found in
-Phase 2, bind it instead of hardcoding:
+Phase 2, bind it instead of hardcoding. The variables API lives under `figma.variables.*` (NOT the
+`figma` global), and `setBoundVariableForPaint` takes a *paint* and returns a new one you must
+reassign:
 
 ```javascript
-const colorVar = await figma.importVariableByKeyAsync(colorVarKey);
-node.setBoundVariableForPaint('fills', 0, colorVar);
-const radiusVar = await figma.importVariableByKeyAsync(radiusVarKey);
-node.setBoundVariable('cornerRadius', radiusVar);
+// colour fill (same shape for strokes)
+const colorVar = await figma.variables.importVariableByKeyAsync(colorVarKey);
+let fills = node.fills;
+if (fills && fills !== figma.mixed && fills.length && fills[0].type === 'SOLID') {
+  fills = [...fills];
+  fills[0] = figma.variables.setBoundVariableForPaint(fills[0], 'color', colorVar);
+  node.fills = fills;                       // reassign — required
+}
+// scalar field (radius / itemSpacing / padding)
+const radiusVar = await figma.variables.importVariableByKeyAsync(radiusVarKey);
+node.setBoundVariable('cornerRadius', radiusVar);   // fallback: pass radiusVar.id
+// text: apply a DS text style (NOT the variables API)
+const ts = await figma.importStyleByKeyAsync(textStyleKey);
+await textNode.setTextStyleIdAsync(ts.id);          // sets font/size/weight/lineHeight — fill stays separate
 ```
+
+> ⚠ `figma.importVariableByKeyAsync(...)` (no `.variables`) and `node.setBoundVariableForPaint('fills', 0, ...)`
+> THROW in the Figma MCP runtime — use the forms above. Cache imports (one per key), then bind.
 
 Fall back to raw CSS values only if no DS variable exists for that role.
 
