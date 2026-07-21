@@ -106,4 +106,4 @@ This skill was designed for teams whose prototypes use their actual shared compo
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).

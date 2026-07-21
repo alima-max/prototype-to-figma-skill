@@ -28,7 +28,7 @@ supports — see [Client Compatibility](#client-compatibility) below.
 
 ---
 
-## Four non-negotiable rules
+## Five non-negotiable rules
 
 ### Rule 0: Never use browser capture or HTML-to-design tools
 
@@ -44,16 +44,39 @@ no DS components, and no annotations — the opposite of what this skill produce
 **Do not** call `figma.createComponent()` or `figma.createComponentSet()`. These pollute the
 design system with components that don't belong there.
 
-When a prototype element has no DS match: build it from primitives (`figma.createFrame()`,
-`figma.createRectangle()`, `figma.createText()`), add a **DS Drift annotation** explaining
-what was missing, and list it in the Phase 6 summary.
+When a prototype element has **no component of any kind** in the DS (see Rule 2 for the bar):
+build it from primitives (`figma.createFrame()`, `figma.createRectangle()`, `figma.createText()`),
+add a **DS Drift annotation** explaining what was missing, and list it in the Phase 6 summary.
 
-### Rule 2: Never omit a prototype element
+### Rule 2: Prefer DS component instances over primitives — always
+
+Primitives are a genuine last resort, not a shortcut. The whole point of this skill is to avoid
+rebuilding by hand — so an element must not be drawn from `createFrame`/`createRectangle`/
+`createText` until the Phase 2 discovery pass has confirmed the DS has **nothing** for it.
+
+Decision order for every element:
+
+1. **Exact match** → import the component and set its variant properties.
+2. **Component exists but lacks the exact variant** (e.g. a Badge with no `success` color, a
+   Nav with no `collapsed` state) → **still instantiate the component** and apply a per-instance
+   override (fill, text, size) rather than building a primitive. Add a DS Drift annotation noting
+   the missing variant.
+3. **No matching component at all** → only now build from primitives, with a DS Drift annotation.
+
+Repeated elements are where this matters most: if a Badge component exists, all 60 badges are
+instances — not 60 hand-made frames. Same for nav, inputs, textareas, list rows, avatars. A
+frame full of primitives that shadow existing components is a failed run, even if it looks right.
+
+Likewise, bind **typography, color, spacing, radius, and border-width to DS text styles and
+variables** (Phase 2 discovers them, Phase 4 binds them). Raw hex, ad-hoc font sizes, and raw
+stroke weights are drift — not parity — even inside primitives.
+
+### Rule 3: Never omit a prototype element
 
 Every visible element must appear in the Figma output — DS instance or primitive. Skipping
 elements because you couldn't find a DS match is the most common cause of incomplete outputs.
 
-### Rule 3: Annotations must be attached to nodes, and must be flow-critical only
+### Rule 4: Annotations must be attached to nodes, and must be flow-critical only
 
 **Annotations are what make this output useful for review.** A frame with no annotations is
 just a static image. But annotating every tap target creates noise that buries the actual flow.
@@ -165,31 +188,51 @@ interpretation explicitly before starting Phase 2.
 
 ---
 
-### Phase 2: Map components to the design system
+### Phase 2: Discovery pass — map to the design system before drawing anything
 
-For every component in the Phase 1a inventory, determine DS match or primitive.
+Do a full discovery pass against the linked library **first**, then map every element. Do not
+start building until this table exists. The default is *instance*, not primitive (Rule 2).
 
-**Search strategy** (try in order before declaring "no match"):
+**2a. Enumerate the library once, up front.** Before searching per component, pull the catalog so
+you know what exists:
+
+- **Components:** `search_design_system(fileKey, includeComponents=true)` with broad queries, plus
+  category sweeps ("input", "navigation", "feedback", "card", "badge", "avatar", "table") to
+  surface the full set — not just the names your code happens to use.
+- **Variables:** `search_design_system(..., includeVariables=true)` and `get_variable_defs` for
+  color, spacing, radius, and **border-width** tokens. Record the keys.
+- **Text styles:** capture the library's typography styles (name → font, size, weight, line
+  height) from `search_design_system` / `get_variable_defs`. These are what body copy, labels,
+  and headings must bind to — not hardcoded hex + ad-hoc `fontSize`.
+
+**2b. Match each inventory element** (try in order before declaring "no match"):
 1. `search_design_system(fileKey, query="ComponentName", includeComponents=true)`
-2. Try alternate names: Alert/Banner/Toast/Notification, Dropdown/Select/Menu, Tag/Chip/Badge, etc.
-3. Search by visual category: "input", "navigation", "feedback", "card"
-4. Check if a parent component covers it (e.g., "Card" covers `Card.Header`)
+2. Alternate names: Alert/Banner/Toast/Notification, Dropdown/Select/Menu, Tag/Chip/Badge,
+   Nav/Sidebar/TabBar, TextField/Input, TextArea/Multiline, Avatar/UserPill, etc.
+3. Visual category: "input", "navigation", "feedback", "card"
+4. Parent component coverage (e.g., "Card" covers `Card.Header`)
 
 **For found components:** call `get_context_for_code_connect` to get exact variant prop names
 before setting properties in Phase 4.
 
-**For DS variables:** `search_design_system(..., includeVariables=true)` for colors and spacing.
-Record any variable keys found — bind them in Phase 4 instead of hardcoding raw values.
+**When a component exists but the exact variant does not:** do **not** drop to a primitive.
+Instantiate the component and override the differing property per-instance (fill, text, size),
+then add a DS Drift annotation for the missing variant. Only elements with *no* matching
+component at all become primitives.
 
 **Build the mapping table — every row needs a build approach and drift note:**
 
 | Code component | DS match | Key | Build approach | Drift note |
 |---|---|---|---|---|
 | `<Button variant="primary">` | Button | abc123 | Import + setProperties | ✅ Clean match |
+| `<Badge tone="success">` | Badge | ghi789 | Import + per-instance fill override | ⚠️ No `success` variant — override fill |
 | `<CustomCard>` | — | — | Primitives | ⚠️ No DS match — searched: Card, Panel, Tile |
 | `<DataTable sortable>` | Table | def456 | Import + setProperties | ⚠️ No `sortable` variant in Figma |
 
-Any row with ⚠️ must get a DS Drift annotation in Phase 4.
+Also record, for each element, which **text style** and **color/spacing/radius/border-width
+variables** it should bind to in Phase 4. Any row with ⚠️ must get a DS Drift annotation in
+Phase 4. A row that says "Primitives" is only valid if 2b found nothing — not because a variant
+was missing.
 
 ---
 
@@ -231,17 +274,37 @@ coordinates and a deep-link in the Phase 6 summary.
 **Primitives** — see `figma-patterns.md` Section 4. Use the CSS-measured values for all
 dimensions, radii, and colors.
 
-**DS variable binding** — for every fill, radius, and spacing where a variable key was found in
-Phase 2, bind it instead of hardcoding:
+**Fixed-size square/circle containers (avatars, number badges, icon chips):** set **both** axes
+to fixed sizing — never let auto-layout hug. A hugging container collapses to the width of its
+glyph, so a 32×32 avatar renders 32px tall but ~10px wide. Use `primaryAxisSizingMode = 'FIXED'`
+and `counterAxisSizingMode = 'FIXED'` after `resize(size, size)`, or skip auto-layout and center
+the child manually. See `figma-patterns.md` Section 4.1.
+
+**DS variable + text-style binding** — for every fill, radius, spacing, and **border-width**
+where a variable key was found in Phase 2, bind it instead of hardcoding. Bind body/label/heading
+text to the library **text style** instead of setting raw `fontSize`/`fontName`:
 
 ```javascript
+// Color fill → variable
 const colorVar = await figma.importVariableByKeyAsync(colorVarKey);
 node.setBoundVariableForPaint('fills', 0, colorVar);
+
+// Corner radius → variable
 const radiusVar = await figma.importVariableByKeyAsync(radiusVarKey);
 node.setBoundVariable('cornerRadius', radiusVar);
+
+// Border width → variable (not a raw strokeWeight)
+const borderVar = await figma.importVariableByKeyAsync(borderWidthVarKey);
+node.setBoundVariable('strokeWeight', borderVar);
+
+// Typography → library text style (not hardcoded fontSize/fontName)
+const textStyle = await figma.importStyleByKeyAsync(textStyleKey);
+await textNode.setTextStyleIdAsync(textStyle.id);
 ```
 
-Fall back to raw CSS values only if no DS variable exists for that role.
+**Page and surface backgrounds** must bind to the surface/wash color variable too — never a raw
+page-background hex. Fall back to raw CSS values only when Phase 2 found no DS variable or text
+style for that role (and note it as drift).
 
 **Annotations — attach to nodes during build, not after**
 
@@ -309,9 +372,14 @@ One frame at the top of the page:
 
 **6a. Completeness check** — via `get_metadata` on the output, verify:
 - Every row in the Phase 2 mapping table has a named layer in the correct frame
+- **Every element with a DS match is an instance, not a primitive** — including repeated
+  elements (badges, nav, inputs, textareas, avatars). Primitives appear only for rows Phase 2
+  confirmed had no match; each such primitive carries a DS Drift annotation.
 - Frame dimensions match the CSS-measured viewport
 - No new master components were created in local assets
-- DS variable bindings are present on at least color fills and border-radii
+- DS variable bindings are present on color fills, border-radii, and **border-widths**; text
+  binds to **library text styles**; page/surface backgrounds bind to a surface variable
+- **Square/circle containers render square** — width equals height (no hug collapse)
 
 Fix anything missing with a follow-up `use_figma` call before presenting.
 
@@ -335,6 +403,11 @@ When Write tools are unavailable, produce a structured markdown document using t
 ---
 
 ## Important principles
+
+**Instance first, primitive last.** The value of this skill is not rebuilding by hand. If the DS
+has a component — even without the exact variant — use it with an override. Bind typography,
+color, spacing, radius, and border-width to DS styles and variables. A pixel-accurate frame made
+of primitives that shadow real components is still a failed run.
 
 **Read the CSS, then build.** Every dimension, color, radius, and spacing value must come from
 the source files — not from memory or approximation. Guessing is what causes visual drift.

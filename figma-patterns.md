@@ -11,7 +11,10 @@ Common patterns for building prototype-to-Figma output. Read this before your fi
 1. Font loading
 2. Creating frames
 3. Importing DS components (matched elements)
-4. Building from primitives (unmatched elements)
+   - 3.1 Missing-variant override (use the component anyway)
+   - 3.2 Binding variables and text styles
+4. Building from primitives (unmatched elements — last resort)
+   - 4.1 Fixed-size square / circle containers
 5. The "No DS match" badge
 6. Native Figma Dev Mode annotations
 7. Flow arrows and connectors
@@ -150,13 +153,51 @@ if (specific?.type === "COMPONENT") {
 > These create new master components in the Figma file and pollute the design system.
 > Only use `importComponentByKeyAsync` for DS components.
 
+### 3.1 Missing-variant override (use the component anyway)
+
+When the DS component exists but has no variant matching the prototype (e.g. a Badge with no
+`success` tone, a Nav with no `collapsed` state), **still instantiate it** and override the
+differing property on the instance. Do not fall back to a primitive.
+
+```javascript
+const badge = (await figma.importComponentByKeyAsync(badgeKey)).createInstance();
+badge.setProperties({ "Size": "sm" });               // set what variants you can
+// No `success` tone variant → override the fill on the instance to match the prototype
+badge.fills = [{ type: 'SOLID', color: { r: 0.16, g: 0.73, b: 0.35 } }];
+parentFrame.appendChild(badge);
+// Then add a DS Drift annotation noting the missing variant (see Section 11).
+```
+
+Overridable per-instance without breaking the link: `fills`, `strokes`, child `characters`,
+`resize()`, and nested text style. This keeps the element a real DS instance for the design team.
+
+### 3.2 Binding variables and text styles on instances and primitives
+
+Prefer bound DS variables and text styles over raw values, on both instances and primitives:
+
+```javascript
+// Color / spacing / radius / border-width → variable
+const v = await figma.importVariableByKeyAsync(varKey);
+node.setBoundVariableForPaint('fills', 0, v);   // fills
+node.setBoundVariable('cornerRadius', v);        // radius
+node.setBoundVariable('strokeWeight', v);        // border width
+node.setBoundVariable('itemSpacing', v);         // gap / spacing
+
+// Typography → library text style
+const style = await figma.importStyleByKeyAsync(textStyleKey);
+await textNode.setTextStyleIdAsync(style.id);
+```
+
+Bind page and surface background fills to the surface/wash variable, never a raw hex.
+
 ---
 
-## 4. Building from primitives (unmatched elements)
+## 4. Building from primitives (unmatched elements — last resort)
 
-When a prototype component has no DS match, approximate it visually using plain frames,
-rectangles, and text. The goal is to make reviewers understand the intent — not to be
-pixel-perfect. Always follow with a "No DS match" badge (see section 5).
+Only build from primitives when the Phase 2 discovery pass confirmed the DS has **no** matching
+component and **no** overridable variant (Section 3.1). Approximate the element visually using
+plain frames, rectangles, and text — bind DS variables and text styles (Section 3.2) wherever
+they exist rather than hardcoding. Always follow with a "No DS match" badge (see section 5).
 
 ```javascript
 // ─── Button (no DS match) ─────────────────────────────────────────────────
@@ -289,6 +330,44 @@ async function buildPrimitiveBanner(message, type = 'info', parent, x, y, width 
 **General rule for primitives:** Match the visual intent (color, shape, size) of the prototype
 element as closely as you can from reading the source code. Exact pixel-perfection is not
 required — recognizability is.
+
+### 4.1 Fixed-size square / circle containers (avatars, number badges, icon chips)
+
+A common bug: an avatar or count circle renders at the correct height but collapses to the width
+of its glyph (e.g. 32px tall, 10px wide). Cause: the container uses auto-layout with hugging
+sizing, so the counter axis shrinks to the child. Fix: pin **both** axes to fixed sizing after
+`resize(size, size)`, or skip auto-layout entirely.
+
+```javascript
+// ─── Square/circle container — stays square ──────────────────────────────
+async function buildCircle(size, glyph, parent, x, y) {
+  await figma.loadFontAsync({ family: "Inter", style: "Semi Bold" });
+
+  const circle = figma.createFrame();
+  circle.name = `Avatar ${size}×${size}`;
+  circle.resize(size, size);                    // ← resize() FIRST
+  circle.layoutMode = 'HORIZONTAL';
+  circle.primaryAxisSizingMode = 'FIXED';       // ← BOTH axes fixed, not AUTO/hug
+  circle.counterAxisSizingMode = 'FIXED';
+  circle.primaryAxisAlignItems = 'CENTER';      // center the glyph
+  circle.counterAxisAlignItems = 'CENTER';
+  circle.cornerRadius = size / 2;               // full circle; use token/px for a square
+  circle.fills = [{ type: 'SOLID', color: { r: 0.9, g: 0.9, b: 0.92 } }];
+
+  const text = figma.createText();
+  text.fontName = { family: "Inter", style: "Semi Bold" };
+  text.characters = glyph;
+  text.fontSize = Math.round(size * 0.4);
+  circle.appendChild(text);
+
+  circle.x = x; circle.y = y;
+  parent.appendChild(circle);
+  return circle;
+}
+```
+
+> If you must use hugging on one axis, verify the result: a circle whose width ≠ height in the
+> Phase 6 `get_metadata` check is the collapse bug and must be fixed.
 
 ---
 
