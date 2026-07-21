@@ -173,20 +173,31 @@ Overridable per-instance without breaking the link: `fills`, `strokes`, child `c
 
 ### 3.2 Binding variables and text styles on instances and primitives
 
-Prefer bound DS variables and text styles over raw values, on both instances and primitives:
+Prefer bound DS variables and text styles over raw values, on both instances and primitives. The
+variables API is `figma.variables.*` (NOT the `figma` global); `setBoundVariableForPaint` returns
+a new paint you must reassign:
 
 ```javascript
-// Color / spacing / radius / border-width → variable
-const v = await figma.importVariableByKeyAsync(varKey);
-node.setBoundVariableForPaint('fills', 0, v);   // fills
-node.setBoundVariable('cornerRadius', v);        // radius
-node.setBoundVariable('strokeWeight', v);        // border width
-node.setBoundVariable('itemSpacing', v);         // gap / spacing
+// Color fill → variable (same shape for strokes)
+const cVar = await figma.variables.importVariableByKeyAsync(colorVarKey);
+let fills = node.fills;
+if (fills && fills !== figma.mixed && fills.length && fills[0].type === 'SOLID') {
+  fills = [...fills];                        // copy — assigning into the live array is a no-op
+  fills[0] = figma.variables.setBoundVariableForPaint(fills[0], 'color', cVar);
+  node.fills = fills;                        // reassign — required
+}
 
-// Typography → library text style
+// Scalar fields → node.setBoundVariable (radius / border-width / spacing)
+const sVar = await figma.variables.importVariableByKeyAsync(scalarVarKey);
+node.setBoundVariable('cornerRadius', sVar);   // also 'strokeWeight', 'itemSpacing', paddings; fallback: sVar.id
+
+// Typography → library text style (figma.importStyleByKeyAsync, NOT the variables API)
 const style = await figma.importStyleByKeyAsync(textStyleKey);
 await textNode.setTextStyleIdAsync(style.id);
 ```
+
+> ⚠ `figma.importVariableByKeyAsync(...)` (no `.variables`) and `node.setBoundVariableForPaint('fills', 0, ...)`
+> THROW in the Figma MCP runtime — use the forms above.
 
 Bind page and surface background fills to the surface/wash variable, never a raw hex.
 

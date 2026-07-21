@@ -282,25 +282,33 @@ the child manually. See `figma-patterns.md` Section 4.1.
 
 **DS variable + text-style binding** — for every fill, radius, spacing, and **border-width**
 where a variable key was found in Phase 2, bind it instead of hardcoding. Bind body/label/heading
-text to the library **text style** instead of setting raw `fontSize`/`fontName`:
+text to the library **text style** instead of setting raw `fontSize`/`fontName`. The variables API
+lives under `figma.variables.*` (NOT the `figma` global), and `setBoundVariableForPaint` takes a
+*paint* and returns a new one you must reassign:
 
 ```javascript
-// Color fill → variable
-const colorVar = await figma.importVariableByKeyAsync(colorVarKey);
-node.setBoundVariableForPaint('fills', 0, colorVar);
+// Color fill → variable. setBoundVariableForPaint returns a NEW paint — reassign node.fills.
+const colorVar = await figma.variables.importVariableByKeyAsync(colorVarKey);
+let fills = node.fills;
+if (fills && fills !== figma.mixed && fills.length && fills[0].type === 'SOLID') {
+  fills = [...fills];                        // copy — assigning into the live array is a no-op
+  fills[0] = figma.variables.setBoundVariableForPaint(fills[0], 'color', colorVar);
+  node.fills = fills;                        // reassign — required
+}
 
-// Corner radius → variable
-const radiusVar = await figma.importVariableByKeyAsync(radiusVarKey);
-node.setBoundVariable('cornerRadius', radiusVar);
+// Scalar fields (radius / border-width / spacing) → node.setBoundVariable
+const radiusVar = await figma.variables.importVariableByKeyAsync(radiusVarKey);
+node.setBoundVariable('cornerRadius', radiusVar);   // fallback: pass radiusVar.id
+const borderVar = await figma.variables.importVariableByKeyAsync(borderWidthVarKey);
+node.setBoundVariable('strokeWeight', borderVar);   // not a raw strokeWeight
 
-// Border width → variable (not a raw strokeWeight)
-const borderVar = await figma.importVariableByKeyAsync(borderWidthVarKey);
-node.setBoundVariable('strokeWeight', borderVar);
-
-// Typography → library text style (not hardcoded fontSize/fontName)
+// Typography → library text style (styles use figma.importStyleByKeyAsync, NOT the variables API)
 const textStyle = await figma.importStyleByKeyAsync(textStyleKey);
-await textNode.setTextStyleIdAsync(textStyle.id);
+await textNode.setTextStyleIdAsync(textStyle.id);   // font/size/weight/lineHeight; fill stays separate
 ```
+
+> ⚠ `figma.importVariableByKeyAsync(...)` (no `.variables`) and `node.setBoundVariableForPaint('fills', 0, ...)`
+> THROW in the Figma MCP runtime — use the forms above. Cache imports (one per key), then bind.
 
 **Page and surface backgrounds** must bind to the surface/wash color variable too — never a raw
 page-background hex. Fall back to raw CSS values only when Phase 2 found no DS variable or text
