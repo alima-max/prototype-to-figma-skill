@@ -24,25 +24,26 @@ that cross-functional partners can review async. Two equal goals:
 2. **Interaction legibility** — every state and transition is a real, clickable prototype flow
    *and* is annotated on its node, so a reviewer understands what's tappable and where it leads.
 
-This is the same proven method as the external `prototype-to-figma` skill, but the native surface
-removes its biggest constraint (keyhole access to the library) and unlocks capabilities MCP can't
-reach: real prototype interactions, round-trip sync, and DS-gap proposals.
+This is the same proven method as the external `prototype-to-figma` skill.
 
----
+## What the Figma MCP surface already supports (field-tested)
 
-## What's different when you're native
+A live run against a real Make file corrected several assumptions. **The current Figma MCP
+(`use_figma`) already does most of what was assumed to be "native-only":**
 
-| Capability | External (MCP) | Native agent (this skill) |
-|---|---|---|
-| Design-system access | Keyhole — `search_design_system` queries | Full catalog: every component, variant, variable, text style |
-| Interactions | Text annotations only | **Real prototype connections** between frames |
-| Direction | One-way (code → Figma) | **Round-trip** — diff and patch existing frames in place |
-| DS gaps | Listed in a summary | **Proposed** components/variables on a proposals page or branch |
-| Review | Share a link | Native comments, dev-ready status, branch |
+| Capability | Reality via `use_figma` today |
+|---|---|
+| Real prototype interactions | ✅ `node.setReactionsAsync(...)` + `figma.currentPage.flowStartingPoints` both work |
+| Node-attached Dev Mode annotations | ✅ `node.annotations = [...]` works (see the append gotcha in `native-patterns.md` §5) |
+| Full design-system access | ✅ **but you must scope it** — `get_libraries` → `search_design_system(..., includeLibraryKeys)`. Unscoped search returns org-wide noise and hides the file's own library |
+| Import Make images/assets | ✅ read the Make image resource → `upload_assets` (see §6) |
+| Round-trip / diff-in-place | ⚠️ possible by reading + patching nodes (§3); no first-class diff API |
+| `use_figma` return values | ❌ the tool does **not** surface a script's return value — read state back or render a report to canvas to verify |
 
-Everything below leans on these. The *method* is portable; the *mechanics* use the native Plugin
-API (`figma.*`) — see `native-patterns.md`, and `../figma-patterns.md` for shared build primitives
-(frames, component import, variable binding, node annotations).
+So the genuine wins of running natively are **fewer round-trips and richer library/context access**,
+not new capability. Build with `use_figma` and don't assume anything is impossible until a call
+fails. The *method* is portable; mechanics live in `native-patterns.md`, with shared build
+primitives in `../figma-patterns.md`.
 
 ---
 
@@ -75,42 +76,70 @@ close/cancel/nav/decorative. Never use floating text boxes as a substitute for `
 
 ## The workflow
 
-### Phase 0: Resolve source and target
+### Phase 0: Resolve source and target; enumerate libraries
 
-**Source.** Identify the prototype: a Figma Make file/artifact, a linked repo, or code the user
-points at. For Make, read the generated component tree and interaction logic directly.
+**Source.** Identify the prototype: a Figma Make file, a linked repo, or code the user points at.
 
-**Target.** Default to a new page in the current file named `[Spec] <feature>`. If a matching
-spec page exists, Phase 7 (round-trip) applies instead of a fresh build.
+**Target.** Default to a new page in the target file named `[Spec] <feature>`. If a matching spec
+page exists, Phase 7 (round-trip) applies instead of a fresh build.
 
-**Capabilities.** Confirm library access, prototyping (`setReactionsAsync`), and whether the
-surface supports branches. Announce what you have; degrade gracefully (e.g. proposals page if no
-branch).
+**Enumerate the file's libraries — do not skip this.** Call `get_libraries(fileKey)` and read
+`libraries_added_to_file`. These are the libraries actually subscribed to the target file; capture
+their `libraryKey`s. Phase 2 scopes discovery to these keys. **A plain `search_design_system`
+query with no `includeLibraryKeys` searches everything the account can see and buries the file's
+own library in org-wide noise — that is what makes the skill "miss" a DS that is right there.**
+If `libraries_added_to_file` is empty, say so; only then is a primitive-heavy build expected.
 
 ### Phase 1: Analyze the prototype
 
 Read all source before touching the canvas.
-- **Component inventory** — for each UI element: name, props/variants in use, visual structure,
-  interactive or not. This is the Phase 6 completeness checklist.
-- **Interaction flows** — trigger → state change → before/after → branches (success/error/edge).
-  Record state count. This becomes the prototype wiring in Phase 5.
-- **Layout** — fixed vs. scrollable, what persists (nav/header), viewport dimensions. Extract the
-  content dimensions only; don't recreate a device shell as a wrapper frame.
-- **Measurements** — exact width/height, padding, gap, radius, font, color per element. Source of
-  truth for Phase 4.
 
-### Phase 2: Discovery pass over the native library
+**Reading a Figma Make source (important — Make is not a design file):**
+- `get_design_context(fileKey=<makeKey>, nodeId="0:1")` is the **only** reader that works on a
+  `/make/` file — it returns the React source tree as resource links. Read `App.tsx`, `routes.tsx`,
+  and each screen/component with `ReadMcpResource`.
+- `get_metadata`, `get_screenshot`, and `get_variable_defs` **all reject `/make/` URLs** — don't
+  rely on them for a Make source.
+- **No viewport dimensions are available** (screens are usually `size-full`). Infer the canvas size
+  from imported asset dimensions or the largest fixed layout, or ask the user. State the assumption.
 
-Do this **before drawing anything** — default is *instance*, not primitive.
-- **Components** — enumerate the linked libraries' full component set (not just names the code
-  uses). Record variant prop names for each match.
-- **Variables** — color, spacing, radius, border-width tokens. Record ids/keys.
-- **Text styles** — the library's typography styles (font/size/weight/line-height). Body, labels,
-  and headings bind to these.
+Capture:
+- **Component inventory** — for each UI element: name, props/variants, visual structure, interactive
+  or not. This is the Phase 6 completeness checklist.
+- **Interaction flows** — trigger → state change → before/after → branches. Record state count;
+  this becomes the Phase 5 wiring. (`react-router` `navigate()` + `setState` map directly to reactions.)
+- **Layout** — fixed vs. scrollable, what persists (nav/header). Extract content dimensions only;
+  don't recreate a device shell as a wrapper frame.
+- **Tokens** — read the source's own token file (e.g. `theme.css`: colors, radii, type scale, font
+  families). These are CSS variables, **not** Figma variables yet — Phase 2 reconciles them.
+- **Assets** — list every image/SVG the source references (`get_design_context` returns Make image
+  resource links). Phase 1b brings them across.
 
-Build the mapping table: `code element → DS match → build approach → bound style/variables →
-drift note`. A "primitive" row is valid only when discovery found nothing — never because a
-variant was missing.
+### Phase 1b: Bring over images and assets
+
+Every image and SVG the prototype uses must land in the Figma file — placeholders are drift. See
+`native-patterns.md` §6. In short: read each Make image resource (→ local file; large reads can
+drop, retry), then `upload_assets` and POST the bytes onto the receiving node. SVGs go through
+`figma.createNodeFromSvg()` in `use_figma`, not `upload_assets`.
+
+### Phase 2: Discovery pass over the file's libraries
+
+Do this **before drawing anything** — default is *instance*, not primitive. Scope every call to the
+`libraryKey`s from Phase 0.
+- **Components** — `search_design_system(fileKey, query, includeLibraryKeys=[...])` with broad and
+  category queries; `list_file_components_for_code_connect` enumerates published components. Record
+  variant prop names for each match. (A real run surfaced a `Nav Button` set only once scoped —
+  unscoped it was invisible.)
+- **Variables** — same scoped search with `includeVariables:true` for color / spacing / radius /
+  border-width. Record keys.
+- **Text styles** — the library's typography styles. Body, labels, headings bind to these.
+- **Token reconciliation** — map the source's CSS variables (Phase 1) to these DS variables/styles
+  by role (`--primary` → the DS brand color var, etc.). Bind the DS var in Phase 4; where no DS var
+  exists, use the raw source value and note the gap.
+
+Build the mapping table: `code element → DS match (scoped) → build approach → bound style/variables
+→ drift note`. A "primitive" row is valid only when scoped discovery found nothing — never because a
+variant was missing, and never because the search wasn't scoped.
 
 ### Phase 3: Plan the page structure
 
@@ -136,7 +165,13 @@ viewport line. ~200px between frames, ~400px between sections.
   they exist. Fixed-size square/circle containers (avatars, count badges) use fixed sizing on
   **both** axes so they don't collapse.
 - **Annotate as you build** — attach flow-critical annotations to the node itself, in scope, right
-  after creating it. Two categories: Interaction (blue), DS Gap (orange).
+  after creating it. Two categories: Interaction (blue), DS Gap (orange). **Set the full
+  annotations array in one assignment** — do NOT append by reading the getter
+  (`node.annotations = [...node.annotations, entry]` throws on the 2nd annotation; see
+  `native-patterns.md` §5). Collect a node's entries and assign once.
+- **Verify by reading back, not by return value** — `use_figma` does not surface a script's return
+  value. To confirm reactions/annotations landed, read the state back in a later call (e.g.
+  `node.reactions.length`) or render a short report onto the canvas, then screenshot it.
 
 ### Phase 5: Wire the interactions (native)
 
@@ -160,9 +195,11 @@ frames, mark removed ones. Don't rebuild from scratch. See `native-patterns.md` 
 
 ### Phase 8: Verify and hand off
 
-- **Completeness** — every mapping-table row has a named layer; DS matches are instances (incl.
-  repeated elements); frames match measured viewport; text/variable bindings present; square
-  containers square; no masters created in the live file; every transition has a reaction.
+- **Completeness** — every mapping-table row has a named layer; DS matches (scoped to the file's
+  libraries) are instances, incl. repeated elements; **every source image/SVG imported — no
+  placeholders**; text/variable bindings present; square containers square; no masters created in
+  the live file; every transition has a reaction. Verify by reading state back (§8), not by trusting
+  a silent `use_figma` return.
 - **Review lifecycle** — add a flow-overview frame (feature, flow list, legend, DS-gap list, open
   questions), mark frames dev-ready, and post the entry point as a comment for reviewers.
 - **Present** — file/page link + deep-link to the first flow, flow/frame counts, instances vs.
@@ -172,7 +209,8 @@ frames, mark removed ones. Don't rebuild from scratch. See `native-patterns.md` 
 
 ## Reference
 
-- `native-patterns.md` — net-new native mechanics: prototype reactions & flow starting points,
-  text-style/variable binding, round-trip diff, DS-proposals page.
+- `native-patterns.md` — §1 variable/text-style binding · §2 prototype reactions & flow starts ·
+  §3 round-trip diff · §4 DS-gap proposals · §5 annotation set-once fix · §6 image/SVG import ·
+  §7 scoped library discovery · §8 reading results back.
 - `../figma-patterns.md` — shared build primitives (frames, component import, primitives,
   node annotations) from the `prototype-to-figma` skill.

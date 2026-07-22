@@ -128,3 +128,87 @@ proposals.name = '[DS proposals] <feature>';
 
 Each proposal note should name the code element, the search terms that found no match (or the
 missing variant), and the frames that needed it — so the gap is actionable, not just logged.
+
+---
+
+## 5. Attach annotations — set once, never append via the getter
+
+`node.annotations = [...node.annotations, entry]` **throws on the second annotation**: the getter
+returns normalized objects the setter rejects when re-assigned. In a real run this silently dropped
+every node's 2nd annotation and (via a fallback) renamed frames. Collect all of a node's entries
+and assign the full array **once**:
+
+```javascript
+// WRONG — throws on the 2nd call, drops the annotation
+// node.annotations = [...(node.annotations||[]), entry];
+
+// RIGHT — build the complete list, assign once
+const entries = [];
+entries.push({ labelMarkdown: '**Tap →** navigate to Detail', categoryId: interCat?.id });
+if (isPrimitive) entries.push({ labelMarkdown: '**DS Gap:** no match — built from primitives', categoryId: gapCat?.id });
+try { node.annotations = entries; } catch (e) { node.name += ' [note: ' + entries[0].labelMarkdown.slice(0,60) + ']'; }
+```
+
+Native annotations **do** work through `use_figma` (this was wrongly assumed MCP-only) — just set
+them in one shot.
+
+---
+
+## 6. Bring Make images and SVGs into the Figma file
+
+`get_design_context` on a Make file lists image resources
+(`file://figma/make/image/<makeKey>/<hash>.png`). Pipeline, per image:
+
+1. **Read the bytes** — `ReadMcpResource(server:"figma", uri:<imageUri>)`. Binary is saved to a
+   local file and the path is returned. Large reads (multi-MB) can drop the connection — retry once.
+2. **Get an upload URL** — `upload_assets(fileKey, count:1, nodeId:<receivingNode>, scaleMode:"FILL")`
+   returns a `submitUrl`. Pass `nodeId` to set the image as that node's fill; omit it to create new
+   frames.
+3. **POST the bytes** — to `submitUrl`, either `multipart/form-data` with a `file` field (the
+   filename becomes the layer name) or raw bytes with the right `Content-Type`. Response returns
+   `imageHash` + `placedOnNodeId`. Single-use URL, 10-minute expiry, 10MB max per asset.
+
+```bash
+curl -sS -X POST -F "file=@/local/path/bg.png;type=image/png;filename=IntroBackground.png" \
+  "https://mcp.figma.com/mcp/upload/<id>/submit?scaleMode=FILL"
+# → {"success":true,"imageHash":"…","placedOnNodeId":"9:2"}
+```
+
+Typical use: create a full-bleed rect (or frame) in `use_figma`, insert it behind content
+(`frame.insertChild(0, rect)`), read its id via `get_metadata`, then upload onto that node id.
+
+**SVGs are not supported by `upload_assets`** — bring vector art in through `use_figma` with
+`figma.createNodeFromSvg(svgString)` (read the `.svg` resource for the markup).
+
+Never ship placeholder rectangles where a real asset exists — importing them is the difference
+between a mockup and parity.
+
+---
+
+## 7. Scope design-system discovery to the file's libraries
+
+Unscoped `search_design_system` searches every library the account can see and buries the file's
+own DS in org-wide noise (this is why an enabled library looks "unrecognized"). Always scope:
+
+```javascript
+// 1) enumerate the libraries actually subscribed to the file
+//    get_libraries(fileKey) → libraries_added_to_file[].libraryKey
+const keys = ['lk-…MOSF…', 'lk-…other…'];
+// 2) scope every discovery call to those keys
+//    search_design_system(fileKey, query:'button', includeLibraryKeys: keys,
+//                          includeComponents:true, includeVariables:true, includeStyles:true)
+// 3) list_file_components_for_code_connect(libraryFileKey) enumerates published components in bulk
+```
+
+Run broad + category queries (`'nav'`, `'button'`, `'card'`, `'audio'`, plus the prototype's own
+component names). In a real run, scoping surfaced a `Nav Button` component set that unscoped search
+returned nothing for.
+
+---
+
+## 8. `use_figma` returns nothing — verify by reading back
+
+A script's trailing value is not surfaced by the tool. To confirm an effect landed, either read the
+state in a follow-up call (`node.reactions.length`, `node.annotations.length`,
+`figma.currentPage.flowStartingPoints.length`) or write a short report string into a text node on
+the canvas and screenshot it. Don't assume success from "executed with no return value".

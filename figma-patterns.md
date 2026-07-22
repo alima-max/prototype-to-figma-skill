@@ -639,12 +639,15 @@ async function getOrCreateAnnotationCategory(label, color) {
 }
 
 // ─── Annotate a node safely, with text-overlay fallback ──────────────────
-async function annotateNode(node, markdownText, categoryId) {
+// NOTE: never append via the getter — `node.annotations = [...node.annotations, entry]`
+// THROWS on the 2nd annotation (the getter returns normalized objects the setter rejects).
+// Accumulate a node's entries yourself and assign the full array once.
+async function annotateNode(node, markdownText, categoryId, existingEntries = []) {
   try {
     const entry = categoryId
       ? { labelMarkdown: markdownText, categoryId }
       : { label: markdownText };
-    node.annotations = [...(node.annotations || []), entry];
+    node.annotations = [...existingEntries, entry]; // build from your own list, NOT node.annotations
   } catch (e) {
     // Native annotation API failed — place a visible text label near the node instead.
     // This ensures annotation content always appears in the output.
