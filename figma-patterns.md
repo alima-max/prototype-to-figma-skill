@@ -28,12 +28,29 @@ Common patterns for building prototype-to-Figma output. Read this before your fi
 
 ## 1. Font loading
 
-Always load fonts before setting any text character. Inter is the standard Figma font.
+Always load a font before setting any text character.
+
+**Load the prototype's ACTUAL fonts — do not pre-substitute with Inter.** Figma ships the full
+Google Fonts library as cloud fonts, so the source's real families usually load. Substituting is a
+last resort that loses design intent (and shouldn't be flagged as a DS gap when the real font was
+available all along).
 
 ```javascript
-await figma.loadFontAsync({ family: "Inter", style: "Regular" });
+// Check availability, then load the real font
+const fonts = await figma.listAvailableFontsAsync();
+const has = (fam) => fonts.some(f => f.fontName.family === fam);
+if (has('Geist Mono')) await figma.loadFontAsync({ family: 'Geist Mono', style: 'Regular' });
+```
+
+> **Variable fonts expose named-instance styles, not `Regular`.** e.g. `Workbench` loads as
+> `Slight` / `Delicate` / `Close` / …, and `figma.loadFontAsync({family:'Workbench',style:'Regular'})`
+> THROWS. Read the family's real styles from `listAvailableFontsAsync` and pick the closest instance
+> to the source's `font-variation-settings`. Only fall back to Inter if the family is genuinely
+> absent — and only then is it a substitution worth flagging.
+
+```javascript
+await figma.loadFontAsync({ family: "Inter", style: "Regular" });   // fallback only
 await figma.loadFontAsync({ family: "Inter", style: "Semi Bold" });
-await figma.loadFontAsync({ family: "Inter", style: "Bold" });
 ```
 
 Note: "Semi Bold" has a space (not "SemiBold"). Same for "Extra Bold".
@@ -639,12 +656,15 @@ async function getOrCreateAnnotationCategory(label, color) {
 }
 
 // ─── Annotate a node safely, with text-overlay fallback ──────────────────
-async function annotateNode(node, markdownText, categoryId) {
+// NOTE: never append via the getter — `node.annotations = [...node.annotations, entry]`
+// THROWS on the 2nd annotation (the getter returns normalized objects the setter rejects).
+// Accumulate a node's entries yourself and assign the full array once.
+async function annotateNode(node, markdownText, categoryId, existingEntries = []) {
   try {
     const entry = categoryId
       ? { labelMarkdown: markdownText, categoryId }
       : { label: markdownText };
-    node.annotations = [...(node.annotations || []), entry];
+    node.annotations = [...existingEntries, entry]; // build from your own list, NOT node.annotations
   } catch (e) {
     // Native annotation API failed — place a visible text label near the node instead.
     // This ensures annotation content always appears in the output.
