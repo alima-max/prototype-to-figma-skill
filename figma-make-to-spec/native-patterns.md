@@ -74,6 +74,8 @@ await textNode.setTextStyleIdAsync(textStyle.id);   // font/size/weight/lineHeig
 > - `figma.importVariableByKeyAsync(...)` (no `.variables`) and `node.setBoundVariableForPaint('fills', 0, ...)` THROW — use the forms above.
 > - **You must `await figma.setCurrentPageAsync(page)` before reading `page.children`** on a page you didn't just create — under dynamic-page loading, `page.children` is otherwise empty and traversal silently binds nothing.
 > - A whole-page bind pass: load page → build resolved palette → walk nodes, binding each SOLID fill to its value-nearest variable. Verify a non-zero bound count (reading state back, per §8).
+> - **Skip translucent fills.** A `white @ 10%` surface has color `{1,1,1}` and value-matches a full-opacity white variable — binding it drops the alpha and the surface renders opaque (buttons/scrims turn solid, hiding labels). Only bind fills with `opacity === 1` (and non-mixed); leave translucent surfaces raw, or re-apply their alpha after binding.
+> - **Gate on distance.** If the value-nearest variable is still far from the raw color (e.g. sum-abs-RGB distance > ~0.12), the DS has no real match — keep the raw value and flag a DS gap rather than forcing a wrong bind.
 
 ---
 
