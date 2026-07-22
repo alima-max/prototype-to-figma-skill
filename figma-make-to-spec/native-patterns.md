@@ -221,6 +221,11 @@ Typical use: create a full-bleed rect (or frame) in `use_figma`, insert it behin
 > returned by the POST, and equals the Make asset hash). Prefer this over re-uploading.
 > **Very large assets (multi-MB) frequently drop on `ReadMcpResource`** (`Connection closed`) — read
 > them solo, retry, and if they keep failing, keep a placeholder + flag it rather than blocking.
+> **There is no fallback route for a Make asset that won't read:** `download_assets` rejects `/make/`
+> URLs, `get_design_context` on a Make file returns `file://` resource links (the same failing
+> channel), and setting a fill by `imageHash` only works for images **already uploaded to this file**
+> (`figma.getImageByHash` is `null` otherwise and nothing renders). So the resource read is the only
+> path in — when it fails for a big asset, that asset stays a flagged placeholder.
 
 **SVGs are not supported by `upload_assets`** — bring vector art in through `use_figma` with
 `figma.createNodeFromSvg(svgString)` (read the `.svg` resource for the markup).
