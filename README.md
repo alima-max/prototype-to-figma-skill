@@ -104,13 +104,11 @@ This skill was designed for teams whose prototypes use their actual shared compo
 - **Primitive fallback patterns** — `figma-patterns.md` contains helpers for Button, Input, Card, and Banner; add your own for other component types
 - **Flow granularity** — the skill groups micro-interactions into single annotated frames by default; you might want more or fewer frames per flow
 
-## Variants
+## Related
 
-- **`figma-make-to-spec/`** — a variant of this skill reframed for the **Figma-native agent**,
-  taking a Figma Make prototype and producing a review-ready spec *inside* Figma. It reuses the
-  same portable method (discovery pass, instance-first, node-attached annotations, flow explosion,
-  DS-drift-as-signal) and adds native-only capabilities: real prototype interactions, round-trip
-  sync, and DS-gap proposals. See [`figma-make-to-spec/SKILL.md`](figma-make-to-spec/SKILL.md).
+- **[`figma-make-to-spec`](https://github.com/alima-max/figma-make-to-spec)** — a sibling skill
+  for turning a Figma Make prototype into a review-ready spec *inside* Figma (native-agent
+  oriented). Reuses this skill's portable method; lives in its own repo.
 
 ## License
 
