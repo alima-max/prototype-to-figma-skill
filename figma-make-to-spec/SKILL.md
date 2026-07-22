@@ -168,6 +168,10 @@ viewport line. ~200px between frames, ~400px between sections.
 - **DS instances** — import by key, `setProperties` with exact variant names. Missing variant →
   per-instance override + DS-gap note (Rule 1).
 - **Bind** text styles and variables per Rule 2 (`native-patterns.md` §1, `../figma-patterns.md`).
+- **Fonts** — load the prototype's **real** font families (check `listAvailableFontsAsync`; variable
+  fonts like Workbench expose named-instance styles such as `Slight`, not `Regular`). Substitute
+  with Inter **only** if a family is genuinely absent — that is the only real font gap worth
+  flagging. See `../figma-patterns.md` §1.
 - **Primitives** — only for confirmed no-match elements; still bind variables/text styles where
   they exist. Fixed-size square/circle containers (avatars, count badges) use fixed sizing on
   **both** axes so they don't collapse.

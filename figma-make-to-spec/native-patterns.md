@@ -46,7 +46,8 @@ for (const lv of colourVars) {
   if (r?.value?.r != null) palette.push({ v, c: r.value });
 }
 probe.remove();
-const nearest = (r,g,b) => palette.reduce((best,o)=>{const d=Math.abs(o.c.r-r)+Math.abs(o.c.g-g)+Math.abs(o.c.b-b);return d<best.d?{d,o}:best;},{d:9}).o;
+// match on RGBA (include alpha — see 1c for why translucent fills need it)
+const nearest = (t) => palette.reduce((best,o)=>{const d=Math.abs(o.c.r-t.r)+Math.abs(o.c.g-t.g)+Math.abs(o.c.b-t.b)+Math.abs((o.c.a??1)-(t.a??1));return d<best.d?{d,o}:best;},{d:9}).o;
 // bind a fill to the value-nearest DS variable; if the nearest is still far, keep raw + flag DS Gap
 ```
 
