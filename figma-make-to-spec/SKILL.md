@@ -36,7 +36,8 @@ A live run against a real Make file corrected several assumptions. **The current
 | Real prototype interactions | ✅ `node.setReactionsAsync(...)` + `figma.currentPage.flowStartingPoints` both work |
 | Node-attached Dev Mode annotations | ✅ `node.annotations = [...]` works (see the append gotcha in `native-patterns.md` §5) |
 | Full design-system access | ✅ **but you must scope it** — `get_libraries` → `search_design_system(..., includeLibraryKeys)`. Unscoped search returns org-wide noise and hides the file's own library |
-| Import Make images/assets | ✅ read the Make image resource → `upload_assets` (see §6) |
+| Import Make images/assets | ✅ read the Make image resource → `upload_assets`, or set fill by `imageHash` (see §6) |
+| Bind design tokens to variables | ✅ but discover via **team-library API** (not `search_design_system`) and match by **resolved value**, not ramp name (§1a–1b) |
 | Round-trip / diff-in-place | ⚠️ possible by reading + patching nodes (§3); no first-class diff API |
 | `use_figma` return values | ❌ the tool does **not** surface a script's return value — read state back or render a report to canvas to verify |
 
@@ -58,7 +59,10 @@ instances, never hand-made copies.
 
 **Rule 2 — Bind, don't hardcode.** Typography binds to library **text styles**; color, spacing,
 radius, and border-width bind to **variables**; page/surface backgrounds bind to a surface
-variable. Raw hex, ad-hoc font sizes, and raw stroke weights are drift, not parity.
+variable. Raw hex, ad-hoc font sizes, and raw stroke weights are drift, not parity. Binding is
+**mandatory** — discover variables via the team-library API and match by resolved value (§1a–1b),
+then run a whole-page bind pass and confirm a non-zero bound count. A build that renders correctly
+but leaves values raw has failed this rule.
 
 **Rule 3 — Never create master components.** Do not call `figma.createComponent()` /
 `createComponentSet()` in the working file. DS-gap *proposals* go on a dedicated proposals page or
@@ -130,8 +134,11 @@ Do this **before drawing anything** — default is *instance*, not primitive. Sc
   category queries; `list_file_components_for_code_connect` enumerates published components. Record
   variant prop names for each match. (A real run surfaced a `Nav Button` set only once scoped —
   unscoped it was invisible.)
-- **Variables** — same scoped search with `includeVariables:true` for color / spacing / radius /
-  border-width. Record keys.
+- **Variables** — **do not** rely on `search_design_system` for these (it returned an empty list
+  even with 60+ published). Enumerate via the team-library API
+  (`figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync` →
+  `getVariablesInLibraryCollectionAsync`), and **match raw values to variables by RESOLVED color/number,
+  not by ramp name** (names aren't an ordered scale). See `native-patterns.md` §1a–1b.
 - **Text styles** — the library's typography styles. Body, labels, headings bind to these.
 - **Token reconciliation** — map the source's CSS variables (Phase 1) to these DS variables/styles
   by role (`--primary` → the DS brand color var, etc.). Bind the DS var in Phase 4; where no DS var
@@ -197,7 +204,9 @@ frames, mark removed ones. Don't rebuild from scratch. See `native-patterns.md` 
 
 - **Completeness** — every mapping-table row has a named layer; DS matches (scoped to the file's
   libraries) are instances, incl. repeated elements; **every source image/SVG imported — no
-  placeholders**; text/variable bindings present; square containers square; no masters created in
+  placeholders**; **every color/radius/spacing that has a value-nearest DS variable is BOUND, not
+  raw** (run a whole-page bind pass and confirm a non-zero bound count — raw hex left behind is the
+  most common miss); text bound to library styles; square containers square; no masters created in
   the live file; every transition has a reaction. Verify by reading state back (§8), not by trusting
   a silent `use_figma` return.
 - **Review lifecycle** — add a flow-overview frame (feature, flow list, legend, DS-gap list, open

@@ -12,30 +12,68 @@ native agent.
 
 ## 1. Bind text styles and variables (not raw values)
 
+**Binding is mandatory, not optional. Every color, radius, and spacing value the source expresses
+as a token must end up bound to a DS variable — not a raw hex or number.** A field-tested run that
+"looked right" but left 81 raw fills unbound was a failure: the design team can't retheme it, and
+it isn't parity.
+
+### 1a. Discover variables via the team-library API — NOT search_design_system
+
+`search_design_system(..., includeVariables:true)` returned an **empty** variables list even when
+the file's library published 60+ variables. The reliable source is the Plugin API team library:
+
+```javascript
+const collections = await figma.teamLibrary.getAvailableLibraryVariableCollectionsAsync();
+// e.g. MOSF → "Colours" (33), "Size" (28: padding/gap/corner-radius/font-size), "Tokens" (fonts)
+for (const col of collections) {
+  const vars = await figma.teamLibrary.getVariablesInLibraryCollectionAsync(col.key); // {name,key,resolvedType}
+}
+const v = await figma.variables.importVariableByKeyAsync(libraryVar.key); // import before binding
+```
+
+### 1b. Match by RESOLVED VALUE, not by name
+
+Ramp names are **not** an ordered light→dark scale — binding `#1E1E1E` to `Black/1000` by name put a
+light value on a dark background and made text vanish. Resolve each candidate's actual color and pick
+the nearest:
+
+```javascript
+const probe = figma.createRectangle(); figma.currentPage.appendChild(probe); // consumer for resolve
+const palette = [];
+for (const lv of colourVars) {
+  const v = await figma.variables.importVariableByKeyAsync(lv.key);
+  const r = v.resolveForConsumer(probe);           // {value:{r,g,b,a}, resolvedType}
+  if (r?.value?.r != null) palette.push({ v, c: r.value });
+}
+probe.remove();
+const nearest = (r,g,b) => palette.reduce((best,o)=>{const d=Math.abs(o.c.r-r)+Math.abs(o.c.g-g)+Math.abs(o.c.b-b);return d<best.d?{d,o}:best;},{d:9}).o;
+// bind a fill to the value-nearest DS variable; if the nearest is still far, keep raw + flag DS Gap
+```
+
+### 1c. Apply the binding
+
 The variables API lives under `figma.variables.*` (NOT the `figma` global), and
 `setBoundVariableForPaint` takes a *paint* and returns a new one you must reassign.
 
 ```javascript
 // Color fill → variable
-const colorVar = await figma.variables.importVariableByKeyAsync(colorVarKey);
 let fills = node.fills;
 if (fills && fills !== figma.mixed && fills.length && fills[0].type === 'SOLID') {
   fills = [...fills];                        // copy — assigning into the live array is a no-op
   fills[0] = figma.variables.setBoundVariableForPaint(fills[0], 'color', colorVar);
   node.fills = fills;                        // reassign — required
 }
-
 // Scalar fields (radius / border-width / spacing) → node.setBoundVariable
-const radiusVar = await figma.variables.importVariableByKeyAsync(radiusVarKey);
 node.setBoundVariable('cornerRadius', radiusVar);   // also 'strokeWeight', 'itemSpacing'; fallback: .id
-
 // Typography → library text style (styles use figma.importStyleByKeyAsync, NOT the variables API)
 const textStyle = await figma.importStyleByKeyAsync(textStyleKey);
 await textNode.setTextStyleIdAsync(textStyle.id);   // font/size/weight/lineHeight; fill stays separate
 ```
 
-> ⚠ `figma.importVariableByKeyAsync(...)` (no `.variables`) and
-> `node.setBoundVariableForPaint('fills', 0, ...)` THROW — use the forms above.
+> ⚠ Gotchas that cost real runs:
+> - `figma.importVariableByKeyAsync(...)` (no `.variables`) and `node.setBoundVariableForPaint('fills', 0, ...)` THROW — use the forms above.
+> - **You must `await figma.setCurrentPageAsync(page)` before reading `page.children`** on a page you didn't just create — under dynamic-page loading, `page.children` is otherwise empty and traversal silently binds nothing.
+> - A whole-page bind pass: load page → build resolved palette → walk nodes, binding each SOLID fill to its value-nearest variable. Verify a non-zero bound count (reading state back, per §8).
 
 ---
 
@@ -177,6 +215,13 @@ curl -sS -X POST -F "file=@/local/path/bg.png;type=image/png;filename=IntroBackg
 Typical use: create a full-bleed rect (or frame) in `use_figma`, insert it behind content
 (`frame.insertChild(0, rect)`), read its id via `get_metadata`, then upload onto that node id.
 
+> **Placement can silently no-op.** If the POST response lacks a `placedOnNodeId`, the image
+> committed to the file but was not set as the fill. The reliable fix: set it in `use_figma` by
+> `imageHash` — `node.fills = [{ type:'IMAGE', imageHash:'<hash>', scaleMode:'FILL' }]` (the hash is
+> returned by the POST, and equals the Make asset hash). Prefer this over re-uploading.
+> **Very large assets (multi-MB) frequently drop on `ReadMcpResource`** (`Connection closed`) — read
+> them solo, retry, and if they keep failing, keep a placeholder + flag it rather than blocking.
+
 **SVGs are not supported by `upload_assets`** — bring vector art in through `use_figma` with
 `figma.createNodeFromSvg(svgString)` (read the `.svg` resource for the markup).
 
@@ -204,11 +249,25 @@ Run broad + category queries (`'nav'`, `'button'`, `'card'`, `'audio'`, plus the
 component names). In a real run, scoping surfaced a `Nav Button` component set that unscoped search
 returned nothing for.
 
+> **Variables are the exception:** `search_design_system` returned an empty variables list even when
+> the library published 60+. Discover variables through the team-library API instead — see §1a.
+>
+> **Instancing a component whose default variant doesn't match** (e.g. a wide labeled `Nav Button`
+> where the prototype uses a 44px icon button, or a `Wordmark` lockup that's darker/larger than the
+> prototype's mark): pick the matching variant via `componentPropertyDefinitions` / the component
+> set's children, or instance + per-instance override, and add a DS-Gap note. Instance-with-drift
+> beats a hand-built primitive.
+
 ---
 
 ## 8. `use_figma` returns nothing — verify by reading back
 
 A script's trailing value is not surfaced by the tool. To confirm an effect landed, either read the
-state in a follow-up call (`node.reactions.length`, `node.annotations.length`,
-`figma.currentPage.flowStartingPoints.length`) or write a short report string into a text node on
-the canvas and screenshot it. Don't assume success from "executed with no return value".
+state in a follow-up call (`node.reactions.length`, `node.annotations.length`, bound-fill count,
+`figma.currentPage.flowStartingPoints.length`) or stamp a short report onto a node's `name` /
+characters and read it via `get_metadata` / screenshot. Don't assume success from "executed with no
+return value".
+
+> **Eventual consistency:** reads immediately after a write can lag — a just-created page listed no
+> children, and the page listing from `get_metadata` (no nodeId) omitted pages that definitely
+> existed. Re-read, or read the page by its node id rather than trusting the top-level page listing.
