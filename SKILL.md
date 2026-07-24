@@ -30,14 +30,36 @@ supports — see [Client Compatibility](#client-compatibility) below.
 
 ## Five non-negotiable rules
 
-### Rule 0: Never use browser capture or HTML-to-design tools
+### Rule 0: Never screenshot the UI — but DO import the real asset files
 
-**Do not** call `generate_figma_design`, `upload_assets` with a localhost URL, or any other
-tool that opens a browser or captures a screenshot to import into Figma.
+**Do not** call `generate_figma_design`, POST a localhost URL or a rendered screenshot to
+`upload_assets`, or use any other tool that captures the running app as a flat image. A browser
+capture produces a single image with no layers, no DS components, and no annotations — the
+opposite of what this skill produces.
 
 Read the source code (CSS modules, Tailwind, inline styles, React component trees) and build
-frames programmatically via `use_figma`. A browser capture produces a flat image with no layers,
-no DS components, and no annotations — the opposite of what this skill produces.
+frames programmatically via `use_figma`.
+
+**But DO import the prototype's real static assets** — the logos, photos, illustrations, and
+decorative SVGs that already exist as files in the repo (e.g. `public/assets/*.png`, `*.svg`).
+These are design *content*, not a captured screenshot, and importing them is what gives the
+output genuine visual parity instead of leaving dashed `[NEEDS IMPORT]` placeholders. Skipping
+this is the single most common reason a finished frame looks like a wireframe next to the live
+app. Treat asset import as a required build step, not an optional follow-up.
+
+**Mechanism (and a gotcha that costs a full detour if missed):**
+1. Build the frame with named placeholder frames sized/positioned from the CSS (fills them if
+   the import fails).
+2. Call `upload_assets` (once per asset, or `count: N`) to get submit URLs, then `POST` each
+   real file's bytes (`multipart/form-data`, `file` field) — from the repo files, never a
+   localhost render. Each POST returns an **`imageHash`**.
+3. **Do not rely on the `nodeId` argument to place the fill** — in practice it commits the image
+   bytes but often does *not* bind the fill to your node. Capture the `imageHash` from every POST
+   and apply it yourself in `use_figma`:
+   `node.fills = [{ type: 'IMAGE', scaleMode: 'FIT', imageHash }]` (use `FIT` for
+   `object-fit: contain` / logos, `FILL` for covers). Then clear the placeholder stroke/name.
+4. SVGs POST as `image/svg+xml` and import as editable vector trees on the current page — you
+   must reposition/resize them into their placeholder slot rather than setting them as a fill.
 
 ### Rule 1: Never create new Figma components
 
@@ -133,6 +155,7 @@ Every element with a DS Drift note from Phase 2 must have a DS Drift annotation.
 `get_screenshot` (only if user explicitly requests a visual preview).
 
 **Write:** `use_figma` (primary workhorse — all frame building and annotation),
+`upload_assets` (import the prototype's real image/SVG asset files — see Rule 0),
 `whoami`, `create_new_file`.
 
 **Code Connect:** `get_code_connect_map`, `get_code_connect_suggestions`,
@@ -233,6 +256,33 @@ Also record, for each element, which **text style** and **color/spacing/radius/b
 variables** it should bind to in Phase 4. Any row with ⚠️ must get a DS Drift annotation in
 Phase 4. A row that says "Primitives" is only valid if 2b found nothing — not because a variant
 was missing.
+
+**2c. Resolve themed / runtime-remapped CSS-variable tokens — never trust the raw `var()`.**
+When colors, spacing, or radii come from CSS custom properties (`var(--token-…)`) that a runtime
+theme provider remaps — e.g. a `ThemeScope` / `data-theme` / class-based provider that changes
+what `--token-color-purple-100` resolves to per brand or per light/dark scheme — the **raw CSS
+value is not the rendered value**. Reading the stylesheet alone yields the variable *name* or its
+top-of-file default, not what the user actually sees in that themed context. This is a silent
+parity killer: the most common symptom is a themed surface (a dark footer, an inverted hero)
+rendering **blank/white** in Figma because its fill was never resolved and set.
+
+Resolve the *rendered* value, then bind it — three steps, in order:
+
+1. **Get the true value from the running app, not the source.** Read the element's computed style
+   in the browser (`getComputedStyle` / an inspect tool → `background-color`, `color`, `gap`,
+   `border-radius`, …) so the theme remap collapses to a concrete `rgb()` / `px`. If no running
+   app is available, resolve the variable chain manually through the active theme's mode, not the
+   `:root` default.
+2. **Match it to a native Figma variable.** Search the linked library (`search_design_system`
+   with `includeVariables=true`, `get_variable_defs`) for a variable whose resolved value equals
+   it under the corresponding mode/theme. If found, **bind the variable** (Phase 4 §3.2) so the
+   node stays theme-aware — this is always preferred over a literal.
+3. **If no Figma variable matches, apply the resolved literal as a primitive value AND add a DS
+   Drift annotation.** The token exists in code but has no design-system variable counterpart —
+   a real gap for the design team to close. Record it as a ⚠️ row in the mapping table.
+
+Never leave a themed token unresolved (raw `var()` name, `:root` default, or an unset fill). "I
+read it from the CSS" is not sufficient when a theme scope sits between the token and the pixel.
 
 ---
 
