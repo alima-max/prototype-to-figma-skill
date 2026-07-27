@@ -83,16 +83,16 @@ When a prototype element has **no component of any kind** in the DS (see Rule 2 
 build it from primitives (`figma.createFrame()`, `figma.createRectangle()`, `figma.createText()`),
 add a **DS Drift annotation** explaining what was missing, and list it in the Phase 6 summary.
 
-### Rule 2: Always use a DS component / variable / style when one exists — measured parity does NOT relax this
+### Rule 2: Always use a DS component / variable / style when one exists — the capture does NOT relax this
 
-Measurement (Rule 0) gives parity; this rule makes the file design-system-native. **It applies as
-you place each measured element** — the measured box tells you *where* and *how big*, but the fill,
-type, and structure come from the DS wherever a match exists. As you build to the measurements,
-reconcile *every* element to the linked library:
+The capture (Rule 0) gives parity; this rule makes the file design-system-native. **It applies as
+you reconcile each captured element** — the captured node tells you *where*, *how big*, and *how it
+looks*, but the structure should come from the DS wherever a match exists. Walk the captured frame
+and reconcile *every* element to the linked library:
 
-1. **Components — always instance, never shadow.** If a measured element matches a DS component,
+1. **Components — always instance, never shadow.** If a captured element matches a DS component,
    **replace it with an instance** and override props (fill, text, size) to match
-   the measured box. If the component exists but lacks the exact variant, still instance it +
+   the captured pixels. If the component exists but lacks the exact variant, still instance it +
    override, and add a DS Drift annotation. Only when there is **no** matching component does the
    element stay a primitive — flagged DS Drift. Repeated elements especially: 60 badges = 60
    instances, never 60 frames. A frame full of primitives that shadow real components is a failed
@@ -108,7 +108,7 @@ reconcile *every* element to the linked library:
 The rule in one line: **prefer the component / color variable / number variable / text style
 over any literal whenever a match exists.** Raw hex, ad-hoc numbers, and shadow-primitives are
 drift — not parity — even when they look right. Phase 2 discovers the components, variables, and
-styles; Phase 4 swaps and binds them as it builds to the measured layout.
+styles; Phase 4 swaps and binds them onto the captured base.
 
 ### Rule 3: Never omit a prototype element
 
