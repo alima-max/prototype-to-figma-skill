@@ -18,12 +18,12 @@ description: >
 This skill takes a working Claude Code prototype and produces a structured Figma file that
 cross-functional partners can review asynchronously. The output has two equal goals:
 
-1. **Faithful visual parity** — layout, colors, spacing, typography, content, and icons match the
-   prototype. Parity comes from **reading the source and resolving its values at a fixed target
-   viewport** (Rule 0) — no browser, no screenshot. IDE-native by design.
-2. **A design-system-native, reviewable result** — every element is a DS component instance, a
-   bound color/number variable, or a text style wherever a match exists (Rule 2), and every state
-   transition is annotated on its node.
+1. **True 1:1 visual parity** — layout, colors, spacing, typography, content, and icons match the
+   *rendered* prototype exactly, because the base is produced by a **headless render → serialize**
+   (Rule 0), not a hand-reconstruction. Runs entirely in the terminal — no visible browser or tab.
+2. **A design-system-native, reviewable result** — captured elements are reconciled to DS component
+   instances / bound variables / text styles wherever the DS is published to Figma (Rule 2), and
+   every state transition is annotated on its node.
 
 **This skill works across all Figma MCP clients.** The output format adapts to what your client
 supports — see [Client Compatibility](#client-compatibility) below.
@@ -32,58 +32,47 @@ supports — see [Client Compatibility](#client-compatibility) below.
 
 ## Five non-negotiable rules
 
-### Rule 0: Read the codebase and build from source — resolve the computed values yourself; never depend on a browser
+### Rule 0: Capture headlessly (render → serialize), never open a visible browser; then reconcile to the DS
 
-**This skill is IDE-native and that is its entire value:** point it at a coded prototype, read the
-source (component tree, CSS/Tailwind, design tokens, assets), and build faithfully in Figma **with
-no running browser**. Do **NOT** reach for `generate_figma_design`, the Figma browser extension,
-screenshots, or any live-DOM capture — those make this skill *redundant with the extension* and
-defeat the point. Reading source is also far cheaper: you write build code from *understanding* the
-code, instead of shuttling a whole page's serialized pixels through the model.
+**True 1:1 requires *rendering* the code — but rendering does NOT require a *visible* browser.** Use
+a **headless** browser (Playwright) so the whole run stays in the terminal: no window, no tab. That
+is the point for the target user — designers working exclusively in code who must not be pulled out
+of the IDE.
 
-**"Faithful" does not require a browser — responsive CSS is deterministic once you FIX A TARGET
-VIEWPORT** (e.g. 1440 desktop). Resolve it arithmetically from source:
-- `clamp(76px, 8vw, 118px)` at 1440 → `8vw = 115.2px` → **115.2px**.
-- `grid-template-columns: minmax(440px,2.2fr) repeat(3, minmax(150px,1fr))` in a known container
-  width with a known gap → compute each column (**2.2 : 1 : 1 : 1** over the free space).
-- `vw`, `min()`/`max()`, `calc()`, `translate()` → all resolvable from source given the viewport.
+Three options; only one is right:
+- ❌ **Read source and hand-build (no render).** An LLM re-deriving a browser's layout/render engine
+  element-by-element is lossy, incomplete, and buggy on any non-trivial page. It is **not 1:1** — it
+  only looks faithful on small, static UIs, and it drifts badly on real ones (collapsed grids,
+  missing elements, half-built SVGs). Do not pretend this is 1:1.
+- ❌ **Visible capture** — `open "<url>#figmacapture=…"`, the in-app preview, or the GUI Figma
+  extension. Correct fidelity, but it pops windows/tabs and drags the designer out of the terminal
+  (and the bare extension gives no DS instances).
+- ✅ **Headless capture.** A headless browser renders the running app in the background and
+  serializes the DOM **1:1 straight to Figma** (data goes browser→Figma, never through the model —
+  so it's fast and cheap). The model then adds the design-system layer. Terminal-native, 1:1,
+  invisible.
 
-Resolve design tokens (`var(--token-…)`) from the **DS package source** (e.g. the token CSS in
-`node_modules/<ds-package>/…`), applying the active theme mode (`ThemeScope` / `data-theme`).
-Recreate inline SVGs from source, import real asset files from the repo. None of this needs a
-browser. *(If — and only if — you're genuinely unsure of one resolved value and a dev server
-happens to be running, you MAY read a single `getComputedStyle` to spot-check it. Never depend on
-it, never walk the whole DOM, never capture the page.)*
+**The capture (headless, terminal-only):**
+1. Ensure the dev server is running — start it in the background if needed (a coding designer
+   usually has one). Determine the route URLs from the codebase.
+2. Drive the capture with a **headless browser (Playwright)** — `generate_figma_design` provides the
+   exact headless script it documents for external sites: navigate to the LOCAL dev URL, strip CSP,
+   inject `capture.js`, then call `window.figma.captureForDesign({ captureId, endpoint,
+   selector:'body' })`. Point it at `localhost`. **Never** use the `open "<url>#figmacapture=…"`
+   flow or the in-app preview — those are visible.
+3. Poll `generate_figma_design` (fileKey + captureId) until `completed`. You get a fully-layered 1:1
+   base (frames / text / vectors) with tokens bound (`bindVariables=true`).
 
-**The failures people blame on "source can't be faithful" are build-execution bugs, not a limit of
-reading source:** auto-layout frames that collapse (set explicit sizes — figma-patterns.md §4.1),
-unimported assets (empty footers), skipped inline SVGs (missing logos/blobs), wrong z-order /
-overflow. Fix those and a source build is faithful.
+**Then reconcile to the DS + annotate (`use_figma`, Rule 2):** swap repeated captured elements for DS
+component instances, bind variables / text styles **where the DS is actually published to Figma**,
+and attach Dev Mode annotations + flow arrows. This is the cheap, surgical layer — it touches a
+handful of components, not the whole page.
 
-**The build pass (`use_figma`):** create one frame per state at the target-viewport page size, then
-place each element at its resolved box with its resolved fill/text/radius/border. Swap DS component
-instances and bind variables/text styles as you go (Rule 2).
-
-- **Text — don't force a hard pixel width.** Figma font metrics differ slightly from the browser's,
-  so a fixed-width text box sized to the source width can re-wrap. Place text at its resolved
-  position but let width **hug** (`textAutoResize = 'WIDTH_AND_HEIGHT'`); for centre-aligned text,
-  anchor by its center.
-- **Inline SVGs (do NOT skip — this is the #1 fidelity gap).** For every `<svg>` in the source
-  (logos, icons, decorative blobs), recreate it with **`figma.createNodeFromSvg(svgString)`** and
-  place/rescale it to its resolved rect. `createNodeFromSvg` **cannot resolve CSS variables** — first
-  replace `var(--…)` and `currentColor` in the SVG string with the resolved token color from the DS
-  package source. Mind z-order: decorative blobs go *behind* the image/text they sit under (insert
-  at a low index), logos/icons on top. This is what reproduces the logo, the footer blob, the card
-  blobs, and the arrow icons — a build with zero VECTOR nodes has dropped all of them.
-- **Raster assets (`<img src=*.png/jpg>`):** map `src` → real file and import via `upload_assets` —
-  `POST` the file bytes (`multipart/form-data`, `file` field) to get an **`imageHash`**, then apply
-  it yourself: `node.fills = [{ type:'IMAGE', scaleMode:'FILL', imageHash }]` (the `nodeId` arg
-  often commits bytes without binding the fill).
-- **Respect `overflow:hidden`.** A flat build (every node at absolute coords) does NOT clip
-  overflowing children the way the browser does — a decorative blob the CSS clips to a footer/card
-  will *bleed* into the section above. For any element whose source CSS sets `overflow: hidden/clip`,
-  build it as a `clipsContent = true` frame and nest its overflowing children (blobs, oversized
-  shapes) inside it.
+**Requirements / honesty:** needs a headless browser (Playwright — a dev-dependency or a Playwright
+MCP) and a runnable dev server. If neither exists, **say so and stop** — do not silently fall back
+to a visible tab, and do not hand-build from source and call it 1:1 (it won't be). If the design
+system isn't published to Figma as components/variables, reconciliation is limited to what exists —
+flag that DS gap, don't swap in a foreign library's components.
 
 ### Rule 1: Never create new Figma components
 
@@ -182,13 +171,12 @@ Every element with a DS Drift note from Phase 2 must have a DS Drift annotation.
 `search_design_system` (components + variables), `get_variable_defs` (exact token values),
 `get_screenshot` (only if user explicitly requests a visual preview).
 
-**Source (primary path — Rule 0):** the codebase itself — read the component tree, CSS/Tailwind,
-design-token package, and assets, and resolve values at a fixed target viewport. NO browser /
-`generate_figma_design` / capture (that's just the extension, and it makes this skill redundant).
+**Capture (primary path — Rule 0):** `generate_figma_design` driven by a **headless** browser
+(Playwright — dev-dependency or MCP) against the local dev server. Renders + serializes 1:1 to
+Figma with no visible window/tab. NEVER the `open`-a-tab flow or the in-app preview (visible).
 
-**Write:** `use_figma` (build to the resolved values, swap DS instances + bind variables, annotate,
-assemble the flow), `upload_assets` (import each asset's real file from the repo — see Rule 0),
-`whoami`, `create_new_file`.
+**Write:** `use_figma` (reconcile captured nodes to DS instances + variables, annotate, assemble
+the flow), `whoami`, `create_new_file`.
 
 **Code Connect:** `get_code_connect_map`, `get_code_connect_suggestions`,
 `get_context_for_code_connect`, `send_code_connect_mappings`.
@@ -339,27 +327,27 @@ a fold marker line at the viewport height. ~200px gaps between frames, ~400px be
 
 ---
 
-### Phase 4: Resolve from source at a target viewport, then build
+### Phase 4: Headless-capture the pixels, then reconcile to the DS
 
-**Step 1 — Resolve (Rule 0).** Fix a target viewport (e.g. 1440 desktop). From the source, compute
-each element's box and style: resolve `fr`/`clamp()`/`vw`/`min`/`max`/`calc()` arithmetically,
-resolve `var(--token-…)` colors from the DS package's token source under the active theme mode, and
-read text content + inline SVG markup + asset paths from the components. Keep a running element list
-(box + style + z-order) — this is the completeness checklist for the build and Phase 6.
+**Step 1 — Capture headlessly (Rule 0).** Make sure the dev server is running (start it in the
+background if needed) and resolve the route URLs from the codebase. For each route/state, call
+`generate_figma_design` (fileKey) to get a captureId + the capture script, then run the **headless
+Playwright** variant of that script against the LOCAL dev URL — navigate, strip CSP, inject
+`capture.js`, `window.figma.captureForDesign({...})`. **No `open`, no visible tab, no in-app
+preview.** Poll `generate_figma_design(fileKey, captureId)` until `completed`. Result: a fully
+layered 1:1 base per state, sent browser→Figma directly.
 
-**Step 2 — Build (`use_figma`).** Create one frame per state at the target-viewport page size, then
-place each element at its resolved box with its resolved fill / text / radius / border. For text,
-**hug the width** (`textAutoResize='WIDTH_AND_HEIGHT'`; center-aligned text anchored by its center)
-— don't force a hard px width or it re-wraps under Figma's font metrics. Import each asset's real
-file via `upload_assets` (imageHash); recreate inline SVGs with `figma.createNodeFromSvg` (resolve
-`var()`/`currentColor` first). Build `overflow:hidden` containers as `clipsContent` frames with
-their overflowing children nested. Use explicit sizes — never let auto-layout hug-collapse a grid.
+**Step 2 — Reconcile to the DS (Rule 2).** Walk each captured frame and, for every element with a
+Phase 2 match, swap it for a DS component instance (override to match the captured pixels), bind
+color + number variables and text styles **where the DS is published to Figma**. Elements with no
+match stay as the captured node, flagged DS Drift. This is the cheap surgical layer — a handful of
+components, not the whole page. If the DS isn't in Figma at all, keep the capture as-is and flag it.
 
-**Step 3 — Reconcile to the DS (Rule 2), then annotate.** As you place each element, swap it for a
-DS component instance where a Phase 2 match exists (override to match the resolved values), bind
-color + number variables on fills / spacing / radius / border / size, and apply text styles.
-Elements with no match stay primitives, each with a DS Drift annotation. Then assemble the flow
-(arrows) and attach Dev Mode annotations (Phase 5).
+**Step 3 — Assemble + annotate (Phase 5).** Arrange the state frames into the flow, add arrows, and
+attach Dev Mode annotations.
+
+> **If there's no headless browser or no dev server:** stop and tell the user what's missing. Do
+> NOT fall back to a visible tab, and do NOT hand-build from source and label it 1:1.
 
 **Placement:** scan the target page with `get_metadata` first. If matching frames/sections exist
 for this feature, insert beside them. If not, create a named section:
@@ -519,10 +507,11 @@ has a component — even without the exact variant — use it with an override. 
 color, spacing, radius, and border-width to DS styles and variables. A pixel-accurate frame made
 of primitives that shadow real components is still a failed run.
 
-**Measure the running app, then build.** Every dimension, color, radius, and spacing value must
-come from the app's *computed* geometry (`getBoundingClientRect` + `getComputedStyle`), not from
-source CSS and not from memory. Source CSS resolves to formulas (grid `fr`, `clamp()`, `vw`,
-transforms), not pixels — measuring the rendered page is the only thing that yields parity.
+**Render, then serialize — headlessly.** True 1:1 comes from a headless browser rendering the code
+and serializing the result to Figma, not from an LLM re-deriving layout from source (lossy on any
+real page) and not from a visible capture (pulls the designer out of the terminal). Headless =
+same fidelity, invisible, terminal-native. The model's job is the DS + annotation layer on top, not
+reproducing the pixels by hand.
 
 **Annotate on the node, not the canvas.** `node.annotations = [...]` is what surfaces in Dev
 Mode. Floating text boxes and separate annotation frames are noise, not annotations.
