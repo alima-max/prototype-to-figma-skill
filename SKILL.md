@@ -18,12 +18,12 @@ description: >
 This skill takes a working Claude Code prototype and produces a structured Figma file that
 cross-functional partners can review asynchronously. The output has two equal goals:
 
-1. **1:1 visual parity** — layout, colors, spacing, typography, content, icons, and viewport
-   width match the *running* app exactly. Parity comes from **capturing the rendered page**
-   (Rule 0), not from hand-transcribing CSS.
-2. **A design-system-native, reviewable result** — every captured element is reconciled to the
-   linked design system (DS component instances, color variables, number variables, text styles)
-   wherever a match exists, and every state transition is annotated on its node.
+1. **1:1 visual parity** — layout, colors, spacing, typography, content, and icons match the
+   *running* app exactly. Parity comes from building to the app's **computed geometry** (Rule 0) —
+   not from transcribing source CSS, and not from screenshotting.
+2. **A design-system-native, reviewable result** — every element is a DS component instance, a
+   bound color/number variable, or a text style wherever a match exists (Rule 2), and every state
+   transition is annotated on its node.
 
 **This skill works across all Figma MCP clients.** The output format adapts to what your client
 supports — see [Client Compatibility](#client-compatibility) below.
@@ -32,37 +32,48 @@ supports — see [Client Compatibility](#client-compatibility) below.
 
 ## Five non-negotiable rules
 
-### Rule 0: Capture the rendered app first — then reconcile to the design system
+### Rule 0: Measure the running app's COMPUTED layout, then build to those numbers
 
-**Do NOT hand-rebuild pages from source as the default.** Reading CSS and re-deriving layout by
-hand drifts badly — collapsed grids, mis-positioned decorations, wrong viewport width, missing
-icons — and it is slow and error-prone. Hand-building is the *fallback*, not the method.
+Two ways to get parity are wrong; one is right.
 
-**Instead, CAPTURE each page/state directly from the running app.** Capture produces a fully
-**layered, editable** reproduction — hundreds of real frames, text nodes, and vector shapes at
-exact positions, plus the true viewport width and the real icons. Capture is **not** a flat
-screenshot: in practice `generate_figma_design` and the Figma browser extension yield 600–700+
-editable nodes for a single marketing page. This is the only reliable path to 1:1 parity, and
-its layered output is exactly what the rest of this skill enriches.
+- ❌ **Transcribe source CSS by hand.** This is what "measure from the code" did, and it *drifts
+  badly* on any responsive/computed CSS: `grid-template-columns: … 2.2fr …`, `clamp(76px,8vw,118px)`,
+  `min()/max()`, `vw`, `translate()`, masks, and runtime theme scopes all resolve to **formulas,
+  not pixels**, in the source. You cannot get a grid's column widths or a `clamp()` font size from
+  the stylesheet — only from the rendered page. Transcribing them produces the collapsed grids and
+  mis-sized text this skill is infamous for.
+- ❌ **Screenshot / DOM capture** (`generate_figma_design`, the Figma browser extension). It gives
+  parity but as a mess of hundreds of nested frames with **no DS instances** — and it is literally
+  what the browser extension already does, so the skill adds nothing over just using the extension.
+- ✅ **Measure the COMPUTED layout from the running app, then build clean DS-native frames to those
+  exact numbers.** This is the skill's real value: the extension's geometric accuracy *plus* a
+  curated, DS-based, annotated file — and fewer nodes than a capture.
 
-- **Web apps (default):** run `generate_figma_design` on each route/state to capture a 1:1
-  layered base. Per the `use_figma` tool's own guidance, run it **in parallel** with a
-  `use_figma` pass that reads the design system, then refine the capture against the DS.
-- **Non-web / no running app (fallback only):** build programmatically from source via
-  `use_figma`, and apply the Phase 6 verification gates (collapsed auto-layout, absolute
-  decorations, viewport width). Only use this when capture is genuinely unavailable.
+**The measurement pass (read-only, one call — no tab-opening capture flow):** in the running app's
+browser, walk the DOM and for every visible element record its **`getBoundingClientRect()`**
+(page-absolute x/y/w/h) and the resolved **`getComputedStyle()`** values you need — `fontSize`,
+`fontWeight`, `fontFamily`, `color`, `backgroundColor`, padding, gap, `borderRadius`, border,
+`textAlign`, plus `<img>` `src` and text content. Return it as a compact JSON array (parent index
++ box + styles). Set the viewport to the target width first (e.g. 1440–1480) so responsive CSS
+resolves to the desktop layout.
 
-**Then use `use_figma` to reconcile and enrich the captured base** (Phases 4–5): swap captured
-elements for DS component instances, bind color + number variables and text styles (Rule 2),
-attach Dev Mode annotations, and assemble the flow (one frame per state, arrows between states).
-Capture gives parity; reconciliation makes it design-system-native.
+**The build pass (`use_figma`):** create one frame per state at the measured page size, then place
+each element at its measured box with its resolved fill/text/radius/border. Swap DS component
+instances and bind variables/text styles as you go (Rule 2). This is programmatic — no capture, no
+image import of the DOM.
 
-**Assets** ride in with the capture. If capture misses one, or you built an element by hand,
-import the real asset **file** (never a localhost URL or rendered screenshot): `POST` the file
-bytes (`multipart/form-data`, `file` field) via `upload_assets` to get an **`imageHash`**, then
-apply it yourself — `node.fills = [{ type:'IMAGE', scaleMode:'FIT', imageHash }]` (the `nodeId`
-arg often commits bytes without binding the fill; `FIT` for `object-fit: contain`/logos, `FILL`
-for covers). SVGs POST as `image/svg+xml` and import as editable vector trees you reposition.
+- **Text — do NOT force the measured pixel width.** Figma font metrics differ slightly from the
+  browser's, so a text box sized to the browser's measured width will re-wrap. Place text at the
+  measured position but let width **hug** (`textAutoResize = 'WIDTH_AND_HEIGHT'`); for
+  centre-aligned text, anchor by the measured center. (This is the one reflow gotcha — everything
+  else is exact.)
+- **Assets:** map each `<img>` `src` to the real file and import it via `upload_assets` — `POST`
+  the file bytes (`multipart/form-data`, `file` field) to get an **`imageHash`**, then apply it
+  yourself: `node.fills = [{ type:'IMAGE', scaleMode:'FILL', imageHash }]` (the `nodeId` arg often
+  commits bytes without binding the fill). Recreate inline SVGs (icons, decorative blobs) with
+  `figma.createNodeFromSvg` from the source, or flag them DS Drift.
+- **Fallback only:** if there is genuinely no running app to measure, transcribe source CSS — the
+  least reliable path — and lean hard on the Phase 6 verification gates.
 
 ### Rule 1: Never create new Figma components
 
@@ -73,16 +84,16 @@ When a prototype element has **no component of any kind** in the DS (see Rule 2 
 build it from primitives (`figma.createFrame()`, `figma.createRectangle()`, `figma.createText()`),
 add a **DS Drift annotation** explaining what was missing, and list it in the Phase 6 summary.
 
-### Rule 2: Always use a DS component / variable / style when one exists — capture-first does NOT relax this
+### Rule 2: Always use a DS component / variable / style when one exists — measured parity does NOT relax this
 
-Capture (Rule 0) gives parity; this rule makes the file design-system-native. **It applies with
-full force to captured nodes too** — a capture is a starting point to reconcile, not a finished
-deliverable. After capturing (or while hand-building in the fallback path), reconcile *every*
-element to the linked library:
+Measurement (Rule 0) gives parity; this rule makes the file design-system-native. **It applies as
+you place each measured element** — the measured box tells you *where* and *how big*, but the fill,
+type, and structure come from the DS wherever a match exists. As you build to the measurements,
+reconcile *every* element to the linked library:
 
-1. **Components — always instance, never shadow.** If an element (captured or built) matches a
-   DS component, **replace it with an instance** and override props (fill, text, size) to match
-   the captured pixels. If the component exists but lacks the exact variant, still instance it +
+1. **Components — always instance, never shadow.** If a measured element matches a DS component,
+   **replace it with an instance** and override props (fill, text, size) to match
+   the measured box. If the component exists but lacks the exact variant, still instance it +
    override, and add a DS Drift annotation. Only when there is **no** matching component does the
    element stay a primitive — flagged DS Drift. Repeated elements especially: 60 badges = 60
    instances, never 60 frames. A frame full of primitives that shadow real components is a failed
@@ -98,7 +109,7 @@ element to the linked library:
 The rule in one line: **prefer the component / color variable / number variable / text style
 over any literal whenever a match exists.** Raw hex, ad-hoc numbers, and shadow-primitives are
 drift — not parity — even when they look right. Phase 2 discovers the components, variables, and
-styles; Phase 4 swaps and binds them onto the captured base.
+styles; Phase 4 swaps and binds them as it builds to the measured layout.
 
 ### Rule 3: Never omit a prototype element
 
@@ -161,12 +172,13 @@ Every element with a DS Drift note from Phase 2 must have a DS Drift annotation.
 `search_design_system` (components + variables), `get_variable_defs` (exact token values),
 `get_screenshot` (only if user explicitly requests a visual preview).
 
-**Capture (primary path — Rule 0):** `generate_figma_design` — capture each web route/state as
-a 1:1 **layered** reproduction (600–700+ editable nodes), then reconcile to the DS with `use_figma`.
+**Measure (primary path — Rule 0):** the client's browser — run one read-only
+`getBoundingClientRect()` + `getComputedStyle()` DOM snapshot per state to get the computed
+geometry. NOT `generate_figma_design`/browser-capture (that's just the extension; no DS instances).
 
-**Write:** `use_figma` (reconcile captured nodes to DS instances + variables, annotate, assemble
-the flow — and the fallback hand-build path), `upload_assets` (import real image/SVG asset files
-when capture misses one — see Rule 0), `whoami`, `create_new_file`.
+**Write:** `use_figma` (build to the measured numbers, swap DS instances + bind variables,
+annotate, assemble the flow), `upload_assets` (import each `<img>`'s real file by src → imageHash —
+see Rule 0), `whoami`, `create_new_file`.
 
 **Code Connect:** `get_code_connect_map`, `get_code_connect_suggestions`,
 `get_context_for_code_connect`, `send_code_connect_mappings`.
@@ -204,10 +216,12 @@ header), and the viewport dimensions. For the phone/device frame: if the prototy
 in a `.phone`, `.device-frame`, or similar shell, **extract only the content dimensions** and
 use those for Figma frame size — do not recreate the shell as a wrapper frame in Figma.
 
-**CSS measurement** — read the CSS modules, Tailwind config, and inline styles for every element
-in your inventory. Record exact values: frame width/height, padding, gap, border-radius,
-font-size, line-height, color, background. These are the source of truth for Phase 4. Do not
-guess or approximate — read the file.
+**Source read (for inventory + structure, NOT for pixel values)** — read the CSS modules,
+Tailwind config, and inline styles to understand each element's structure, variants, and which
+are interactive. Do **not** treat source CSS values as the pixel source of truth: responsive/
+computed CSS (grid `fr`, `clamp()`, `min/max`, `vw`, transforms, theme scopes) resolves to
+formulas, not pixels. The pixel source of truth is the **computed measurement** from the running
+app (Rule 0 / Phase 4). Use source reading only to know *what* to measure and match to the DS.
 
 ---
 
@@ -315,31 +329,28 @@ a fold marker line at the viewport height. ~200px gaps between frames, ~400px be
 
 ---
 
-### Phase 4: Capture, then reconcile in Figma
+### Phase 4: Measure the running app, then build to the measurements
 
-**Step 1 — Capture (default path, Rule 0).** For each route/state, run `generate_figma_design`
-to produce a 1:1 layered base frame. Do this before any hand-building. Verify parity against the
-running app with `get_screenshot` / a browser screenshot. The captured frame carries exact
-layout, positions, viewport width, icons, and images — do not re-derive these by hand.
+**Step 1 — Measure (Rule 0).** Set the browser viewport to the target width, then walk the DOM and
+snapshot every visible element's `getBoundingClientRect()` + resolved `getComputedStyle()` (font,
+color, background, padding, gap, radius, border, `textAlign`, `<img>` src, text) into a compact
+JSON array (parent index + box + styles). One read-only browser call — not a capture.
 
-**Step 2 — Reconcile to the design system (Rule 2).** Walk the captured frame and, for every
-element with a Phase 2 match: swap it for a DS component instance (override to match the captured
-pixels), bind color variables on fills/strokes, bind number variables on spacing/radius/border/
-size/font-size, and apply text styles. Elements with no match stay as captured primitives, each
-with a DS Drift annotation. This is where the file becomes design-system-native.
+**Step 2 — Build to the numbers (`use_figma`).** Create one frame per state at the measured page
+size, then place each element at its measured box with its resolved fill / text / radius / border.
+Position is exact. For text, **hug the width** (`textAutoResize='WIDTH_AND_HEIGHT'`, center-aligned
+text anchored by its measured center) — do not force the measured px width or it re-wraps under
+Figma's font metrics. Map each `<img>` src → real file via `upload_assets` (imageHash); recreate
+inline SVGs with `figma.createNodeFromSvg`.
 
-**Step 3 — Assemble + annotate.** Arrange the state frames into the flow, add arrows, and attach
-Dev Mode annotations (Phase 5).
+**Step 3 — Reconcile to the DS (Rule 2), then annotate.** As you place each element, swap it for a
+DS component instance where a Phase 2 match exists (override to match the measured pixels), bind
+color + number variables on fills / spacing / radius / border / size, and apply text styles.
+Elements with no match stay primitives, each with a DS Drift annotation. Then assemble the flow
+(arrows) and attach Dev Mode annotations (Phase 5).
 
-> **Fallback hand-build only (no capture available):** break the build into multiple `use_figma`
-> calls — one per flow or per frame group. Confirm the CSS measurements from Phase 1a; set every
-> frame's `width`/`height`, padding, gap, border-radius, font-size, and color from the CSS — not
-> from memory. Then still run Step 2 (reconcile to the DS) and the Phase 6 verification gates.
-
-**Placement:** scan the target page with `get_metadata` first. If matching frames/sections exist
-for this feature, insert beside them. If not, create a named section:
-`[Prototype] <feature name>`. Never place frames at an arbitrary far-Y without reporting
-coordinates and a deep-link in the Phase 6 summary.
+> **Fallback (no running app to measure):** transcribe source CSS — the least reliable path — and
+> lean on the Phase 6 verification gates. Never screenshot / capture the DOM as the method (Rule 0).
 
 **Placement:** scan the target page with `get_metadata` first. If matching frames/sections exist
 for this feature, insert beside them. If not, create a named section:
@@ -349,8 +360,8 @@ coordinates and a deep-link in the Phase 6 summary.
 **DS component instances** — see `figma-patterns.md` Section 3 for `importComponentByKeyAsync`
 + `setProperties`.
 
-**Primitives** — see `figma-patterns.md` Section 4. Use the CSS-measured values for all
-dimensions, radii, and colors.
+**Primitives** — see `figma-patterns.md` Section 4. Use the **computed measured values** (Rule 0)
+for all dimensions, radii, and colors.
 
 **Fixed-size square/circle containers (avatars, number badges, icon chips):** set **both** axes
 to fixed sizing — never let auto-layout hug. A hugging container collapses to the width of its
@@ -495,8 +506,10 @@ has a component — even without the exact variant — use it with an override. 
 color, spacing, radius, and border-width to DS styles and variables. A pixel-accurate frame made
 of primitives that shadow real components is still a failed run.
 
-**Read the CSS, then build.** Every dimension, color, radius, and spacing value must come from
-the source files — not from memory or approximation. Guessing is what causes visual drift.
+**Measure the running app, then build.** Every dimension, color, radius, and spacing value must
+come from the app's *computed* geometry (`getBoundingClientRect` + `getComputedStyle`), not from
+source CSS and not from memory. Source CSS resolves to formulas (grid `fr`, `clamp()`, `vw`,
+transforms), not pixels — measuring the rendered page is the only thing that yields parity.
 
 **Annotate on the node, not the canvas.** `node.annotations = [...]` is what surfaces in Dev
 Mode. Floating text boxes and separate annotation frames are noise, not annotations.
