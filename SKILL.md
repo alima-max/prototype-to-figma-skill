@@ -53,9 +53,13 @@ Two ways to get parity are wrong; one is right.
 browser, walk the DOM and for every visible element record its **`getBoundingClientRect()`**
 (page-absolute x/y/w/h) and the resolved **`getComputedStyle()`** values you need — `fontSize`,
 `fontWeight`, `fontFamily`, `color`, `backgroundColor`, padding, gap, `borderRadius`, border,
-`textAlign`, plus `<img>` `src` and text content. Return it as a compact JSON array (parent index
-+ box + styles). Set the viewport to the target width first (e.g. 1440–1480) so responsive CSS
-resolves to the desktop layout.
+`textAlign`, plus `<img>` `src` and text content. **Also capture every `<svg>` element's
+`outerHTML`** and decode `<img>` data-URI / `.svg` sources — inline SVGs (logos, icons, decorative
+blobs) carry their color in a `fill` *attribute*, not `backgroundColor`, so a geometry-only walker
+silently drops them (empty footer, a text placeholder where the logo should be, card art with no
+blob, text arrows instead of icon vectors — the classic "half the design is missing" failure).
+Return it as a compact JSON array (parent index + box + styles + svg). Set the viewport to the
+target width first (e.g. 1440–1480) so responsive CSS resolves to the desktop layout.
 
 **The build pass (`use_figma`):** create one frame per state at the measured page size, then place
 each element at its measured box with its resolved fill/text/radius/border. Swap DS component
@@ -67,11 +71,17 @@ image import of the DOM.
   measured position but let width **hug** (`textAutoResize = 'WIDTH_AND_HEIGHT'`); for
   centre-aligned text, anchor by the measured center. (This is the one reflow gotcha — everything
   else is exact.)
-- **Assets:** map each `<img>` `src` to the real file and import it via `upload_assets` — `POST`
-  the file bytes (`multipart/form-data`, `file` field) to get an **`imageHash`**, then apply it
-  yourself: `node.fills = [{ type:'IMAGE', scaleMode:'FILL', imageHash }]` (the `nodeId` arg often
-  commits bytes without binding the fill). Recreate inline SVGs (icons, decorative blobs) with
-  `figma.createNodeFromSvg` from the source, or flag them DS Drift.
+- **Inline SVGs (do NOT skip — this is the #1 fidelity gap).** For every captured `<svg>`,
+  recreate it with **`figma.createNodeFromSvg(outerHTML)`** and place/rescale it to the measured
+  rect. `createNodeFromSvg` **cannot resolve CSS variables** — first replace `var(--…)` and
+  `currentColor` in the SVG string with the element's *resolved* `getComputedStyle` color (`fill`
+  / `color`). Mind z-order: decorative blobs go *behind* the image/text they sit under (insert at a
+  low index), logos/icons on top. This is what reproduces the Cheddar logo, the footer blob, the
+  card blobs, and the arrow icons — a build with zero VECTOR nodes has dropped all of them.
+- **Raster assets (`<img src=*.png/jpg>`):** map `src` → real file and import via `upload_assets` —
+  `POST` the file bytes (`multipart/form-data`, `file` field) to get an **`imageHash`**, then apply
+  it yourself: `node.fills = [{ type:'IMAGE', scaleMode:'FILL', imageHash }]` (the `nodeId` arg
+  often commits bytes without binding the fill).
 - **Fallback only:** if there is genuinely no running app to measure, transcribe source CSS — the
   least reliable path — and lean hard on the Phase 6 verification gates.
 
@@ -477,6 +487,10 @@ One frame at the top of the page:
 - DS variable bindings are present on color fills, border-radii, and **border-widths**; text
   binds to **library text styles**; page/surface backgrounds bind to a surface variable
 - **Square/circle containers render square** — width equals height (no hug collapse)
+- **Inline SVGs survived** — if the app has any `<svg>` (logo, icons, decorative blobs) the output
+  must contain VECTOR nodes for them. A frame with **0 vectors** means every inline SVG was dropped
+  (wrong/placeholder logo, empty footer, blob-less card art) — go back and add them via
+  `createNodeFromSvg`.
 
 Fix anything missing with a follow-up `use_figma` call before presenting.
 
