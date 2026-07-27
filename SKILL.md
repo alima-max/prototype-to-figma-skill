@@ -18,9 +18,9 @@ description: >
 This skill takes a working Claude Code prototype and produces a structured Figma file that
 cross-functional partners can review asynchronously. The output has two equal goals:
 
-1. **1:1 visual parity** — layout, colors, spacing, typography, content, and icons match the
-   *running* app exactly. Parity comes from building to the app's **computed geometry** (Rule 0) —
-   not from transcribing source CSS, and not from screenshotting.
+1. **Faithful visual parity** — layout, colors, spacing, typography, content, and icons match the
+   prototype. Parity comes from **reading the source and resolving its values at a fixed target
+   viewport** (Rule 0) — no browser, no screenshot. IDE-native by design.
 2. **A design-system-native, reviewable result** — every element is a DS component instance, a
    bound color/number variable, or a text style wherever a match exists (Rule 2), and every state
    transition is annotated on its node.
@@ -32,63 +32,58 @@ supports — see [Client Compatibility](#client-compatibility) below.
 
 ## Five non-negotiable rules
 
-### Rule 0: Measure the running app's COMPUTED layout, then build to those numbers
+### Rule 0: Read the codebase and build from source — resolve the computed values yourself; never depend on a browser
 
-Two ways to get parity are wrong; one is right.
+**This skill is IDE-native and that is its entire value:** point it at a coded prototype, read the
+source (component tree, CSS/Tailwind, design tokens, assets), and build faithfully in Figma **with
+no running browser**. Do **NOT** reach for `generate_figma_design`, the Figma browser extension,
+screenshots, or any live-DOM capture — those make this skill *redundant with the extension* and
+defeat the point. Reading source is also far cheaper: you write build code from *understanding* the
+code, instead of shuttling a whole page's serialized pixels through the model.
 
-- ❌ **Transcribe source CSS by hand.** This is what "measure from the code" did, and it *drifts
-  badly* on any responsive/computed CSS: `grid-template-columns: … 2.2fr …`, `clamp(76px,8vw,118px)`,
-  `min()/max()`, `vw`, `translate()`, masks, and runtime theme scopes all resolve to **formulas,
-  not pixels**, in the source. You cannot get a grid's column widths or a `clamp()` font size from
-  the stylesheet — only from the rendered page. Transcribing them produces the collapsed grids and
-  mis-sized text this skill is infamous for.
-- ❌ **Screenshot / DOM capture** (`generate_figma_design`, the Figma browser extension). It gives
-  parity but as a mess of hundreds of nested frames with **no DS instances** — and it is literally
-  what the browser extension already does, so the skill adds nothing over just using the extension.
-- ✅ **Measure the COMPUTED layout from the running app, then build clean DS-native frames to those
-  exact numbers.** This is the skill's real value: the extension's geometric accuracy *plus* a
-  curated, DS-based, annotated file — and fewer nodes than a capture.
+**"Faithful" does not require a browser — responsive CSS is deterministic once you FIX A TARGET
+VIEWPORT** (e.g. 1440 desktop). Resolve it arithmetically from source:
+- `clamp(76px, 8vw, 118px)` at 1440 → `8vw = 115.2px` → **115.2px**.
+- `grid-template-columns: minmax(440px,2.2fr) repeat(3, minmax(150px,1fr))` in a known container
+  width with a known gap → compute each column (**2.2 : 1 : 1 : 1** over the free space).
+- `vw`, `min()`/`max()`, `calc()`, `translate()` → all resolvable from source given the viewport.
 
-**The measurement pass (read-only, one call — no tab-opening capture flow):** in the running app's
-browser, walk the DOM and for every visible element record its **`getBoundingClientRect()`**
-(page-absolute x/y/w/h) and the resolved **`getComputedStyle()`** values you need — `fontSize`,
-`fontWeight`, `fontFamily`, `color`, `backgroundColor`, padding, gap, `borderRadius`, border,
-`textAlign`, plus `<img>` `src` and text content. **Also capture every `<svg>` element's
-`outerHTML`** and decode `<img>` data-URI / `.svg` sources — inline SVGs (logos, icons, decorative
-blobs) carry their color in a `fill` *attribute*, not `backgroundColor`, so a geometry-only walker
-silently drops them (empty footer, a text placeholder where the logo should be, card art with no
-blob, text arrows instead of icon vectors — the classic "half the design is missing" failure).
-Return it as a compact JSON array (parent index + box + styles + svg). Set the viewport to the
-target width first (e.g. 1440–1480) so responsive CSS resolves to the desktop layout.
+Resolve design tokens (`var(--token-…)`) from the **DS package source** (e.g. the token CSS in
+`node_modules/<ds-package>/…`), applying the active theme mode (`ThemeScope` / `data-theme`).
+Recreate inline SVGs from source, import real asset files from the repo. None of this needs a
+browser. *(If — and only if — you're genuinely unsure of one resolved value and a dev server
+happens to be running, you MAY read a single `getComputedStyle` to spot-check it. Never depend on
+it, never walk the whole DOM, never capture the page.)*
 
-**The build pass (`use_figma`):** create one frame per state at the measured page size, then place
-each element at its measured box with its resolved fill/text/radius/border. Swap DS component
-instances and bind variables/text styles as you go (Rule 2). This is programmatic — no capture, no
-image import of the DOM.
+**The failures people blame on "source can't be faithful" are build-execution bugs, not a limit of
+reading source:** auto-layout frames that collapse (set explicit sizes — figma-patterns.md §4.1),
+unimported assets (empty footers), skipped inline SVGs (missing logos/blobs), wrong z-order /
+overflow. Fix those and a source build is faithful.
 
-- **Text — do NOT force the measured pixel width.** Figma font metrics differ slightly from the
-  browser's, so a text box sized to the browser's measured width will re-wrap. Place text at the
-  measured position but let width **hug** (`textAutoResize = 'WIDTH_AND_HEIGHT'`); for
-  centre-aligned text, anchor by the measured center. (This is the one reflow gotcha — everything
-  else is exact.)
-- **Inline SVGs (do NOT skip — this is the #1 fidelity gap).** For every captured `<svg>`,
-  recreate it with **`figma.createNodeFromSvg(outerHTML)`** and place/rescale it to the measured
-  rect. `createNodeFromSvg` **cannot resolve CSS variables** — first replace `var(--…)` and
-  `currentColor` in the SVG string with the element's *resolved* `getComputedStyle` color (`fill`
-  / `color`). Mind z-order: decorative blobs go *behind* the image/text they sit under (insert at a
-  low index), logos/icons on top. This is what reproduces the Cheddar logo, the footer blob, the
-  card blobs, and the arrow icons — a build with zero VECTOR nodes has dropped all of them.
+**The build pass (`use_figma`):** create one frame per state at the target-viewport page size, then
+place each element at its resolved box with its resolved fill/text/radius/border. Swap DS component
+instances and bind variables/text styles as you go (Rule 2).
+
+- **Text — don't force a hard pixel width.** Figma font metrics differ slightly from the browser's,
+  so a fixed-width text box sized to the source width can re-wrap. Place text at its resolved
+  position but let width **hug** (`textAutoResize = 'WIDTH_AND_HEIGHT'`); for centre-aligned text,
+  anchor by its center.
+- **Inline SVGs (do NOT skip — this is the #1 fidelity gap).** For every `<svg>` in the source
+  (logos, icons, decorative blobs), recreate it with **`figma.createNodeFromSvg(svgString)`** and
+  place/rescale it to its resolved rect. `createNodeFromSvg` **cannot resolve CSS variables** — first
+  replace `var(--…)` and `currentColor` in the SVG string with the resolved token color from the DS
+  package source. Mind z-order: decorative blobs go *behind* the image/text they sit under (insert
+  at a low index), logos/icons on top. This is what reproduces the logo, the footer blob, the card
+  blobs, and the arrow icons — a build with zero VECTOR nodes has dropped all of them.
 - **Raster assets (`<img src=*.png/jpg>`):** map `src` → real file and import via `upload_assets` —
   `POST` the file bytes (`multipart/form-data`, `file` field) to get an **`imageHash`**, then apply
   it yourself: `node.fills = [{ type:'IMAGE', scaleMode:'FILL', imageHash }]` (the `nodeId` arg
   often commits bytes without binding the fill).
-- **Respect `overflow:hidden`.** A flat build (every node at absolute page coords) does NOT clip
-  overflowing children the way the browser does — a decorative blob that the browser clips to a
-  footer/card will *bleed* into the section above. For any element whose `getComputedStyle().overflow`
-  is `hidden`/`clip`, build it as a `clipsContent = true` frame and nest its overflowing children
-  (blobs, oversized shapes) inside it. Capture `overflow` in the measurement pass alongside the box.
-- **Fallback only:** if there is genuinely no running app to measure, transcribe source CSS — the
-  least reliable path — and lean hard on the Phase 6 verification gates.
+- **Respect `overflow:hidden`.** A flat build (every node at absolute coords) does NOT clip
+  overflowing children the way the browser does — a decorative blob the CSS clips to a footer/card
+  will *bleed* into the section above. For any element whose source CSS sets `overflow: hidden/clip`,
+  build it as a `clipsContent = true` frame and nest its overflowing children (blobs, oversized
+  shapes) inside it.
 
 ### Rule 1: Never create new Figma components
 
@@ -187,13 +182,13 @@ Every element with a DS Drift note from Phase 2 must have a DS Drift annotation.
 `search_design_system` (components + variables), `get_variable_defs` (exact token values),
 `get_screenshot` (only if user explicitly requests a visual preview).
 
-**Measure (primary path — Rule 0):** the client's browser — run one read-only
-`getBoundingClientRect()` + `getComputedStyle()` DOM snapshot per state to get the computed
-geometry. NOT `generate_figma_design`/browser-capture (that's just the extension; no DS instances).
+**Source (primary path — Rule 0):** the codebase itself — read the component tree, CSS/Tailwind,
+design-token package, and assets, and resolve values at a fixed target viewport. NO browser /
+`generate_figma_design` / capture (that's just the extension, and it makes this skill redundant).
 
-**Write:** `use_figma` (build to the measured numbers, swap DS instances + bind variables,
-annotate, assemble the flow), `upload_assets` (import each `<img>`'s real file by src → imageHash —
-see Rule 0), `whoami`, `create_new_file`.
+**Write:** `use_figma` (build to the resolved values, swap DS instances + bind variables, annotate,
+assemble the flow), `upload_assets` (import each asset's real file from the repo — see Rule 0),
+`whoami`, `create_new_file`.
 
 **Code Connect:** `get_code_connect_map`, `get_code_connect_suggestions`,
 `get_context_for_code_connect`, `send_code_connect_mappings`.
@@ -344,28 +339,27 @@ a fold marker line at the viewport height. ~200px gaps between frames, ~400px be
 
 ---
 
-### Phase 4: Measure the running app, then build to the measurements
+### Phase 4: Resolve from source at a target viewport, then build
 
-**Step 1 — Measure (Rule 0).** Set the browser viewport to the target width, then walk the DOM and
-snapshot every visible element's `getBoundingClientRect()` + resolved `getComputedStyle()` (font,
-color, background, padding, gap, radius, border, `textAlign`, `<img>` src, text) into a compact
-JSON array (parent index + box + styles). One read-only browser call — not a capture.
+**Step 1 — Resolve (Rule 0).** Fix a target viewport (e.g. 1440 desktop). From the source, compute
+each element's box and style: resolve `fr`/`clamp()`/`vw`/`min`/`max`/`calc()` arithmetically,
+resolve `var(--token-…)` colors from the DS package's token source under the active theme mode, and
+read text content + inline SVG markup + asset paths from the components. Keep a running element list
+(box + style + z-order) — this is the completeness checklist for the build and Phase 6.
 
-**Step 2 — Build to the numbers (`use_figma`).** Create one frame per state at the measured page
-size, then place each element at its measured box with its resolved fill / text / radius / border.
-Position is exact. For text, **hug the width** (`textAutoResize='WIDTH_AND_HEIGHT'`, center-aligned
-text anchored by its measured center) — do not force the measured px width or it re-wraps under
-Figma's font metrics. Map each `<img>` src → real file via `upload_assets` (imageHash); recreate
-inline SVGs with `figma.createNodeFromSvg`.
+**Step 2 — Build (`use_figma`).** Create one frame per state at the target-viewport page size, then
+place each element at its resolved box with its resolved fill / text / radius / border. For text,
+**hug the width** (`textAutoResize='WIDTH_AND_HEIGHT'`; center-aligned text anchored by its center)
+— don't force a hard px width or it re-wraps under Figma's font metrics. Import each asset's real
+file via `upload_assets` (imageHash); recreate inline SVGs with `figma.createNodeFromSvg` (resolve
+`var()`/`currentColor` first). Build `overflow:hidden` containers as `clipsContent` frames with
+their overflowing children nested. Use explicit sizes — never let auto-layout hug-collapse a grid.
 
 **Step 3 — Reconcile to the DS (Rule 2), then annotate.** As you place each element, swap it for a
-DS component instance where a Phase 2 match exists (override to match the measured pixels), bind
+DS component instance where a Phase 2 match exists (override to match the resolved values), bind
 color + number variables on fills / spacing / radius / border / size, and apply text styles.
 Elements with no match stay primitives, each with a DS Drift annotation. Then assemble the flow
 (arrows) and attach Dev Mode annotations (Phase 5).
-
-> **Fallback (no running app to measure):** transcribe source CSS — the least reliable path — and
-> lean on the Phase 6 verification gates. Never screenshot / capture the DOM as the method (Rule 0).
 
 **Placement:** scan the target page with `get_metadata` first. If matching frames/sections exist
 for this feature, insert beside them. If not, create a named section:
