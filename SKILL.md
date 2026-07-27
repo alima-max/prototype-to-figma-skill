@@ -18,10 +18,12 @@ description: >
 This skill takes a working Claude Code prototype and produces a structured Figma file that
 cross-functional partners can review asynchronously. The output has two equal goals:
 
-1. **Pixel-perfect visual parity** — correct layout, colors, spacing, typography, content, and
-   component hierarchy, derived directly from the source code (CSS, Tailwind, inline styles).
-2. **Interaction legibility** — every interactive element and state transition annotated on its
-   node so reviewers understand what's tappable, what it does, and how states connect.
+1. **1:1 visual parity** — layout, colors, spacing, typography, content, icons, and viewport
+   width match the *running* app exactly. Parity comes from **capturing the rendered page**
+   (Rule 0), not from hand-transcribing CSS.
+2. **A design-system-native, reviewable result** — every captured element is reconciled to the
+   linked design system (DS component instances, color variables, number variables, text styles)
+   wherever a match exists, and every state transition is annotated on its node.
 
 **This skill works across all Figma MCP clients.** The output format adapts to what your client
 supports — see [Client Compatibility](#client-compatibility) below.
@@ -30,36 +32,37 @@ supports — see [Client Compatibility](#client-compatibility) below.
 
 ## Five non-negotiable rules
 
-### Rule 0: Never screenshot the UI — but DO import the real asset files
+### Rule 0: Capture the rendered app first — then reconcile to the design system
 
-**Do not** call `generate_figma_design`, POST a localhost URL or a rendered screenshot to
-`upload_assets`, or use any other tool that captures the running app as a flat image. A browser
-capture produces a single image with no layers, no DS components, and no annotations — the
-opposite of what this skill produces.
+**Do NOT hand-rebuild pages from source as the default.** Reading CSS and re-deriving layout by
+hand drifts badly — collapsed grids, mis-positioned decorations, wrong viewport width, missing
+icons — and it is slow and error-prone. Hand-building is the *fallback*, not the method.
 
-Read the source code (CSS modules, Tailwind, inline styles, React component trees) and build
-frames programmatically via `use_figma`.
+**Instead, CAPTURE each page/state directly from the running app.** Capture produces a fully
+**layered, editable** reproduction — hundreds of real frames, text nodes, and vector shapes at
+exact positions, plus the true viewport width and the real icons. Capture is **not** a flat
+screenshot: in practice `generate_figma_design` and the Figma browser extension yield 600–700+
+editable nodes for a single marketing page. This is the only reliable path to 1:1 parity, and
+its layered output is exactly what the rest of this skill enriches.
 
-**But DO import the prototype's real static assets** — the logos, photos, illustrations, and
-decorative SVGs that already exist as files in the repo (e.g. `public/assets/*.png`, `*.svg`).
-These are design *content*, not a captured screenshot, and importing them is what gives the
-output genuine visual parity instead of leaving dashed `[NEEDS IMPORT]` placeholders. Skipping
-this is the single most common reason a finished frame looks like a wireframe next to the live
-app. Treat asset import as a required build step, not an optional follow-up.
+- **Web apps (default):** run `generate_figma_design` on each route/state to capture a 1:1
+  layered base. Per the `use_figma` tool's own guidance, run it **in parallel** with a
+  `use_figma` pass that reads the design system, then refine the capture against the DS.
+- **Non-web / no running app (fallback only):** build programmatically from source via
+  `use_figma`, and apply the Phase 6 verification gates (collapsed auto-layout, absolute
+  decorations, viewport width). Only use this when capture is genuinely unavailable.
 
-**Mechanism (and a gotcha that costs a full detour if missed):**
-1. Build the frame with named placeholder frames sized/positioned from the CSS (fills them if
-   the import fails).
-2. Call `upload_assets` (once per asset, or `count: N`) to get submit URLs, then `POST` each
-   real file's bytes (`multipart/form-data`, `file` field) — from the repo files, never a
-   localhost render. Each POST returns an **`imageHash`**.
-3. **Do not rely on the `nodeId` argument to place the fill** — in practice it commits the image
-   bytes but often does *not* bind the fill to your node. Capture the `imageHash` from every POST
-   and apply it yourself in `use_figma`:
-   `node.fills = [{ type: 'IMAGE', scaleMode: 'FIT', imageHash }]` (use `FIT` for
-   `object-fit: contain` / logos, `FILL` for covers). Then clear the placeholder stroke/name.
-4. SVGs POST as `image/svg+xml` and import as editable vector trees on the current page — you
-   must reposition/resize them into their placeholder slot rather than setting them as a fill.
+**Then use `use_figma` to reconcile and enrich the captured base** (Phases 4–5): swap captured
+elements for DS component instances, bind color + number variables and text styles (Rule 2),
+attach Dev Mode annotations, and assemble the flow (one frame per state, arrows between states).
+Capture gives parity; reconciliation makes it design-system-native.
+
+**Assets** ride in with the capture. If capture misses one, or you built an element by hand,
+import the real asset **file** (never a localhost URL or rendered screenshot): `POST` the file
+bytes (`multipart/form-data`, `file` field) via `upload_assets` to get an **`imageHash`**, then
+apply it yourself — `node.fills = [{ type:'IMAGE', scaleMode:'FIT', imageHash }]` (the `nodeId`
+arg often commits bytes without binding the fill; `FIT` for `object-fit: contain`/logos, `FILL`
+for covers). SVGs POST as `image/svg+xml` and import as editable vector trees you reposition.
 
 ### Rule 1: Never create new Figma components
 
@@ -70,28 +73,32 @@ When a prototype element has **no component of any kind** in the DS (see Rule 2 
 build it from primitives (`figma.createFrame()`, `figma.createRectangle()`, `figma.createText()`),
 add a **DS Drift annotation** explaining what was missing, and list it in the Phase 6 summary.
 
-### Rule 2: Prefer DS component instances over primitives — always
+### Rule 2: Always use a DS component / variable / style when one exists — capture-first does NOT relax this
 
-Primitives are a genuine last resort, not a shortcut. The whole point of this skill is to avoid
-rebuilding by hand — so an element must not be drawn from `createFrame`/`createRectangle`/
-`createText` until the Phase 2 discovery pass has confirmed the DS has **nothing** for it.
+Capture (Rule 0) gives parity; this rule makes the file design-system-native. **It applies with
+full force to captured nodes too** — a capture is a starting point to reconcile, not a finished
+deliverable. After capturing (or while hand-building in the fallback path), reconcile *every*
+element to the linked library:
 
-Decision order for every element:
+1. **Components — always instance, never shadow.** If an element (captured or built) matches a
+   DS component, **replace it with an instance** and override props (fill, text, size) to match
+   the captured pixels. If the component exists but lacks the exact variant, still instance it +
+   override, and add a DS Drift annotation. Only when there is **no** matching component does the
+   element stay a primitive — flagged DS Drift. Repeated elements especially: 60 badges = 60
+   instances, never 60 frames. A frame full of primitives that shadow real components is a failed
+   run even if the pixels are perfect.
+2. **Color variables — always bind.** Every fill/stroke whose value matches a DS color variable
+   MUST bind that variable. Never leave a raw hex where a color variable exists.
+3. **Number variables — always bind.** Every spacing, gap, padding, corner radius, border width,
+   size, and font-size that matches a DS number/dimension variable MUST bind it. Never leave a
+   raw number where a number variable exists.
+4. **Text styles — always apply.** Body/label/heading text binds to the library text style, not
+   raw `fontSize`/`fontName`.
 
-1. **Exact match** → import the component and set its variant properties.
-2. **Component exists but lacks the exact variant** (e.g. a Badge with no `success` color, a
-   Nav with no `collapsed` state) → **still instantiate the component** and apply a per-instance
-   override (fill, text, size) rather than building a primitive. Add a DS Drift annotation noting
-   the missing variant.
-3. **No matching component at all** → only now build from primitives, with a DS Drift annotation.
-
-Repeated elements are where this matters most: if a Badge component exists, all 60 badges are
-instances — not 60 hand-made frames. Same for nav, inputs, textareas, list rows, avatars. A
-frame full of primitives that shadow existing components is a failed run, even if it looks right.
-
-Likewise, bind **typography, color, spacing, radius, and border-width to DS text styles and
-variables** (Phase 2 discovers them, Phase 4 binds them). Raw hex, ad-hoc font sizes, and raw
-stroke weights are drift — not parity — even inside primitives.
+The rule in one line: **prefer the component / color variable / number variable / text style
+over any literal whenever a match exists.** Raw hex, ad-hoc numbers, and shadow-primitives are
+drift — not parity — even when they look right. Phase 2 discovers the components, variables, and
+styles; Phase 4 swaps and binds them onto the captured base.
 
 ### Rule 3: Never omit a prototype element
 
@@ -154,9 +161,12 @@ Every element with a DS Drift note from Phase 2 must have a DS Drift annotation.
 `search_design_system` (components + variables), `get_variable_defs` (exact token values),
 `get_screenshot` (only if user explicitly requests a visual preview).
 
-**Write:** `use_figma` (primary workhorse — all frame building and annotation),
-`upload_assets` (import the prototype's real image/SVG asset files — see Rule 0),
-`whoami`, `create_new_file`.
+**Capture (primary path — Rule 0):** `generate_figma_design` — capture each web route/state as
+a 1:1 **layered** reproduction (600–700+ editable nodes), then reconcile to the DS with `use_figma`.
+
+**Write:** `use_figma` (reconcile captured nodes to DS instances + variables, annotate, assemble
+the flow — and the fallback hand-build path), `upload_assets` (import real image/SVG asset files
+when capture misses one — see Rule 0), `whoami`, `create_new_file`.
 
 **Code Connect:** `get_code_connect_map`, `get_code_connect_suggestions`,
 `get_context_for_code_connect`, `send_code_connect_mappings`.
@@ -305,13 +315,31 @@ a fold marker line at the viewport height. ~200px gaps between frames, ~400px be
 
 ---
 
-### Phase 4: Build in Figma
+### Phase 4: Capture, then reconcile in Figma
 
-Break the build into multiple `use_figma` calls — one per flow or per frame group.
+**Step 1 — Capture (default path, Rule 0).** For each route/state, run `generate_figma_design`
+to produce a 1:1 layered base frame. Do this before any hand-building. Verify parity against the
+running app with `get_screenshot` / a browser screenshot. The captured frame carries exact
+layout, positions, viewport width, icons, and images — do not re-derive these by hand.
 
-**Before writing any node:** confirm the CSS measurements from Phase 1a. Set every frame's
-`width` and `height` to the measured values. Set every padding, gap, border-radius, font-size,
-and color from the CSS — not from memory or approximation.
+**Step 2 — Reconcile to the design system (Rule 2).** Walk the captured frame and, for every
+element with a Phase 2 match: swap it for a DS component instance (override to match the captured
+pixels), bind color variables on fills/strokes, bind number variables on spacing/radius/border/
+size/font-size, and apply text styles. Elements with no match stay as captured primitives, each
+with a DS Drift annotation. This is where the file becomes design-system-native.
+
+**Step 3 — Assemble + annotate.** Arrange the state frames into the flow, add arrows, and attach
+Dev Mode annotations (Phase 5).
+
+> **Fallback hand-build only (no capture available):** break the build into multiple `use_figma`
+> calls — one per flow or per frame group. Confirm the CSS measurements from Phase 1a; set every
+> frame's `width`/`height`, padding, gap, border-radius, font-size, and color from the CSS — not
+> from memory. Then still run Step 2 (reconcile to the DS) and the Phase 6 verification gates.
+
+**Placement:** scan the target page with `get_metadata` first. If matching frames/sections exist
+for this feature, insert beside them. If not, create a named section:
+`[Prototype] <feature name>`. Never place frames at an arbitrary far-Y without reporting
+coordinates and a deep-link in the Phase 6 summary.
 
 **Placement:** scan the target page with `get_metadata` first. If matching frames/sections exist
 for this feature, insert beside them. If not, create a named section:
