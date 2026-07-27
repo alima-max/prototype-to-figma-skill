@@ -82,6 +82,11 @@ image import of the DOM.
   `POST` the file bytes (`multipart/form-data`, `file` field) to get an **`imageHash`**, then apply
   it yourself: `node.fills = [{ type:'IMAGE', scaleMode:'FILL', imageHash }]` (the `nodeId` arg
   often commits bytes without binding the fill).
+- **Respect `overflow:hidden`.** A flat build (every node at absolute page coords) does NOT clip
+  overflowing children the way the browser does — a decorative blob that the browser clips to a
+  footer/card will *bleed* into the section above. For any element whose `getComputedStyle().overflow`
+  is `hidden`/`clip`, build it as a `clipsContent = true` frame and nest its overflowing children
+  (blobs, oversized shapes) inside it. Capture `overflow` in the measurement pass alongside the box.
 - **Fallback only:** if there is genuinely no running app to measure, transcribe source CSS — the
   least reliable path — and lean hard on the Phase 6 verification gates.
 
