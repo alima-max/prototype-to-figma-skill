@@ -52,14 +52,23 @@ Three options; only one is right:
   so it's fast and cheap). The model then adds the design-system layer. Terminal-native, 1:1,
   invisible.
 
+**"Headless" = a separate Chrome process launched with `--headless`: no window, no tab, nothing on
+screen.** It does NOT attach to the designer's open browser and does NOT require Chrome to be
+*open* — only *installed*. It spins up invisibly, renders the localhost page in memory, serializes
+to Figma, and exits. The designer never leaves the terminal and sees nothing happen in their browser.
+
 **The capture (headless, terminal-only):**
-1. Ensure the dev server is running — start it in the background if needed (a coding designer
-   usually has one). Determine the route URLs from the codebase.
-2. Drive the capture with a **headless browser (Playwright)** — `generate_figma_design` provides the
-   exact headless script it documents for external sites: navigate to the LOCAL dev URL, strip CSP,
-   inject `capture.js`, then call `window.figma.captureForDesign({ captureId, endpoint,
-   selector:'body' })`. Point it at `localhost`. **Never** use the `open "<url>#figmacapture=…"`
-   flow or the in-app preview — those are visible.
+1. Ensure the dev server is running — start it in the background if needed. Determine the route
+   URLs from the codebase.
+2. Launch a headless browser from the terminal and run the `generate_figma_design` capture script
+   (navigate to the LOCAL dev URL → strip CSP → inject `capture.js` → `window.figma.captureForDesign(
+   { captureId, endpoint, selector:'body' })`). **Prefer the machine's already-installed Chrome**
+   (`puppeteer-core`, or Playwright with `channel:'chrome'`, or raw CDP) so there's **no download and
+   no MCP** — Chrome need only be *installed*, not open. **Only if no Chrome/Chromium is found**, fall
+   back to a one-time bundled-Chromium download (`npx playwright install chromium` / full
+   `puppeteer`). **Never** launch a *new visible instance*, never attach to the user's live browser,
+   never use `open "<url>#figmacapture=…"` or the in-app preview — all of those put a window/tab on
+   screen.
 3. Poll `generate_figma_design` (fileKey + captureId) until `completed`. You get a fully-layered 1:1
    base (frames / text / vectors) with tokens bound (`bindVariables=true`).
 
@@ -68,11 +77,13 @@ component instances, bind variables / text styles **where the DS is actually pub
 and attach Dev Mode annotations + flow arrows. This is the cheap, surgical layer — it touches a
 handful of components, not the whole page.
 
-**Requirements / honesty:** needs a headless browser (Playwright — a dev-dependency or a Playwright
-MCP) and a runnable dev server. If neither exists, **say so and stop** — do not silently fall back
-to a visible tab, and do not hand-build from source and call it 1:1 (it won't be). If the design
-system isn't published to Figma as components/variables, reconciliation is limited to what exists —
-flag that DS gap, don't swap in a foreign library's components.
+**Requirements / honesty:** needs (a) a **headless browser** — ideally the machine's installed
+Chrome driven headless (no download, no MCP required); a bundled Chromium download is the fallback —
+and (b) a runnable dev server. No Playwright *MCP* is required; a headless Chrome runtime is. If
+there's genuinely no browser at all, **say so and stop** — do not fall back to a visible tab, and do
+not hand-build from source and call it 1:1 (it won't be). If the design system isn't published to
+Figma as components/variables, reconciliation is limited to what exists — flag that DS gap, don't
+swap in a foreign library's components.
 
 ### Rule 1: Never create new Figma components
 
@@ -171,9 +182,11 @@ Every element with a DS Drift note from Phase 2 must have a DS Drift annotation.
 `search_design_system` (components + variables), `get_variable_defs` (exact token values),
 `get_screenshot` (only if user explicitly requests a visual preview).
 
-**Capture (primary path — Rule 0):** `generate_figma_design` driven by a **headless** browser
-(Playwright — dev-dependency or MCP) against the local dev server. Renders + serializes 1:1 to
-Figma with no visible window/tab. NEVER the `open`-a-tab flow or the in-app preview (visible).
+**Capture (primary path — Rule 0):** `generate_figma_design` driven by a **headless** browser —
+ideally the machine's **installed Chrome** run headless (`puppeteer-core` / Playwright
+`channel:'chrome'` / CDP; no download, no MCP), bundled Chromium only as a fallback — against the
+local dev server. Renders + serializes 1:1 to Figma with no visible window/tab. NEVER the
+`open`-a-tab flow or the in-app preview (visible), and never attach to the user's open browser.
 
 **Write:** `use_figma` (reconcile captured nodes to DS instances + variables, annotate, assemble
 the flow), `whoami`, `create_new_file`.
